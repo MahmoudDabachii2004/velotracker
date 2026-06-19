@@ -109,6 +109,34 @@ if platform.system() == "Windows":
             print("[BLE Patch] Applied Windows GattServiceProvider start_advertising direct monkeypatch successfully.")
         except Exception as e:
             print(f"[BLE Patch] Failed to apply Windows GattServiceProvider monkeypatch: {e}")
+
+        # Monkeypatch BlessServerWinRT.start to handle cached/already-advertising state and prevent infinite blocking on wait()
+        try:
+            import bless.backends.winrt.server as bless_winrt_server
+            orig_winrt_start = bless_winrt_server.BlessServerWinRT.start
+
+            async def patched_winrt_start(self, *args, **kwargs):
+                already_advertising = False
+                for uuid, service in self.services.items():
+                    if service.service_provider is not None and service.service_provider.advertisement_status == 2:
+                        already_advertising = True
+                        break
+                if already_advertising:
+                    print("[BLE Patch] Already advertising, setting advertising event to prevent blocking.")
+                    self._advertising_started.set()
+                
+                orig_wait = self._advertising_started.wait
+                self._advertising_started.wait = lambda timeout=2.0: orig_wait(timeout=timeout)
+                try:
+                    await orig_winrt_start(self, *args, **kwargs)
+                finally:
+                    self._advertising_started.wait = orig_wait
+
+            bless_winrt_server.BlessServerWinRT.start = patched_winrt_start
+            print("[BLE Patch] Applied Windows BlessServerWinRT start monkeypatch successfully.")
+        except Exception as e:
+            print(f"[BLE Patch] Failed to apply Windows BlessServerWinRT start monkeypatch: {e}")
+
     except Exception as e:
         print(f"[BLE Patch] Failed to apply Windows BLEAdapter monkeypatch: {e}")
 
@@ -133,6 +161,11 @@ FTMS_FEATURE_UUID = "00002acc-0000-1000-8000-00805f9b34fb"
 FTMS_INDOOR_BIKE_DATA_UUID = "00002ad2-0000-1000-8000-00805f9b34fb"
 FTMS_CONTROL_POINT_UUID = "00002ad9-0000-1000-8000-00805f9b34fb"
 FTMS_STATUS_UUID = "00002ada-0000-1000-8000-00805f9b34fb"
+
+# CPS (Cycling Power Service)
+CPS_SERVICE_UUID = "00001818-0000-1000-8000-00805f9b34fb"
+CPS_MEASUREMENT_UUID = "00002a63-0000-1000-8000-00805f9b34fb"
+CPS_FEATURE_UUID = "00002a65-0000-1000-8000-00805f9b34fb"
 
 # Current platform
 _PLATFORM = platform.system()  # "Darwin", "Windows", or "Linux"
@@ -181,22 +214,40 @@ class BLECadenceServer:
     def _build_indoor_bike_data(self) -> bytearray:
         """FTMS Indoor Bike Data: flags + speed + cadence + power."""
         flags = (1 << 2) | (1 << 6)  # cadence + power present
-        # Speed in 0.01 km/h
-        speed_kmh = (self._current_rpm * config.WHEEL_TO_CRANK_RATIO
-                     * config.WHEEL_CIRCUMFERENCE_M * 60.0) / 100.0
-        speed_raw = int(max(0, min(0xFFFF, speed_kmh)))
+        # Speed in 0.01 km/h:
+        # speed_kmh = (RPM * ratio * circumference * 60) / 1000.0
+        # speed_raw = speed_kmh * 100 = (RPM * ratio * circumference * 60) / 10.0
+        speed_raw_val = (self._current_rpm * config.WHEEL_TO_CRANK_RATIO
+                         * config.WHEEL_CIRCUMFERENCE_M * 60.0) / 10.0
+        speed_raw = int(max(0, min(0xFFFF, speed_raw_val)))
         # Cadence in 0.5 rpm units
         cadence_raw = int(max(0, min(0xFFFF, self._current_rpm * 2.0)))
         # Simplified power (W)
-        power_w = int(max(0, min(0x7FFF, self._current_rpm * 0.8 + 30.0)))
+        power_w = int(max(0, min(0x7FFF, self._current_rpm * 0.8 + 30.0))) if self._current_rpm >= 1.0 else 0
         return bytearray(struct.pack("<HHHh", flags, speed_raw, cadence_raw, power_w))
+
+    def _build_cps_feature(self) -> bytearray:
+        # Cycling Power Feature:
+        # No optional features to prevent duplicate cadence data conflict with CSC.
+        feature = 0x00000000
+        return bytearray(struct.pack("<I", feature))
+
+    def _build_cps_measurement(self) -> bytearray:
+        """Cycling Power Measurement: flags + instantaneous power."""
+        flags = 0x0000  # No optional fields (crank data is handled solely by CSC)
+        power_w = int(max(0, min(0x7FFF, self._current_rpm * 0.8 + 30.0))) if self._current_rpm >= 1.0 else 0
+        return bytearray(struct.pack("<Hh", flags, power_w))
 
     def _build_csc_feature(self) -> bytearray:
         return bytearray(struct.pack("<H", 0x0003))  # Wheel + Crank supported
 
     def _build_ftms_feature(self) -> bytearray:
-        # bit 5 = Power measurement supported
-        return bytearray(struct.pack("<QQQQ", (1 << 5), 0, 0, 0))
+        # FTMS Feature bitmask (32-bit features + 32-bit target settings = 8 bytes)
+        # Bit 1: Cadence Supported
+        # Bit 14: Power Measurement Supported
+        features = (1 << 1) | (1 << 14)
+        target_setting_features = 0
+        return bytearray(struct.pack("<II", features, target_setting_features))
 
     # ========================================================================
     # Build the GATT dict (bless's officially supported API)
@@ -209,6 +260,7 @@ class BLECadenceServer:
         """
         csc_feature_value = self._build_csc_feature()
         ftms_feature_value = self._build_ftms_feature()
+        cps_feature_value = self._build_cps_feature()
 
         gatt: Dict = {
             # ============== CSC Service ==============
@@ -227,6 +279,24 @@ class BLECadenceServer:
                     "Properties": GATTCharacteristicProperties.read,
                     "Permissions": GATTAttributePermissions.readable,
                     "Value": csc_feature_value,
+                },
+            },
+            # ============== CPS Service ==============
+            CPS_SERVICE_UUID: {
+                # CPS Measurement: Notify + Read -> Value must be None
+                CPS_MEASUREMENT_UUID: {
+                    "Properties": (
+                        GATTCharacteristicProperties.notify
+                        | GATTCharacteristicProperties.read
+                    ),
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": None,
+                },
+                # CPS Feature: Read-only -> static Value
+                CPS_FEATURE_UUID: {
+                    "Properties": GATTCharacteristicProperties.read,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": cps_feature_value,
                 },
             },
             # ============== FTMS Service ==============
@@ -280,7 +350,7 @@ class BLECadenceServer:
 
             # Register all services + characteristics at once via the GATT dict
             # This is bless's officially supported API and avoids the cached-value error.
-            print("[BLE] Building GATT services (CSC + FTMS)...")
+            print("[BLE] Building GATT services (CSC + CPS + FTMS)...")
             gatt_dict = self._build_gatt_dict()
             await self._server.add_gatt(gatt_dict)
 
@@ -302,7 +372,8 @@ class BLECadenceServer:
                 await asyncio.sleep(config.BLE_NOTIFY_INTERVAL_SEC)
                 if not self._running:
                     break
-                await self._send_notification()
+                await self._send_ftms_notification()
+                await self._send_cps_notification()
                 counter += 1
                 if counter % 5 == 0:
                     try:
@@ -320,18 +391,35 @@ class BLECadenceServer:
             import traceback
             traceback.print_exc()
 
-    async def _send_notification(self):
-        """Send CSC + FTMS notifications."""
+    async def _send_csc_notification(self):
+        """Send CSC notification immediately when a revolution occurs."""
         try:
-            csc_value = self._build_csc_measurement()
-            self._server.get_characteristic(CSC_MEASUREMENT_UUID).value = csc_value
-            self._server.update_value(CSC_SERVICE_UUID, CSC_MEASUREMENT_UUID)
-
-            bike_value = self._build_indoor_bike_data()
-            self._server.get_characteristic(FTMS_INDOOR_BIKE_DATA_UUID).value = bike_value
-            self._server.update_value(FTMS_SERVICE_UUID, FTMS_INDOOR_BIKE_DATA_UUID)
+            if self._server is not None:
+                csc_value = self._build_csc_measurement()
+                self._server.get_characteristic(CSC_MEASUREMENT_UUID).value = csc_value
+                self._server.update_value(CSC_SERVICE_UUID, CSC_MEASUREMENT_UUID)
         except Exception as e:
-            print(f"[BLE] Notification error: {e}")
+            print(f"[BLE] CSC Notification error: {e}")
+
+    async def _send_ftms_notification(self):
+        """Send FTMS notification (heartbeat)."""
+        try:
+            if self._server is not None:
+                bike_value = self._build_indoor_bike_data()
+                self._server.get_characteristic(FTMS_INDOOR_BIKE_DATA_UUID).value = bike_value
+                self._server.update_value(FTMS_SERVICE_UUID, FTMS_INDOOR_BIKE_DATA_UUID)
+        except Exception as e:
+            print(f"[BLE] FTMS Notification error: {e}")
+
+    async def _send_cps_notification(self):
+        """Send CPS notification."""
+        try:
+            if self._server is not None:
+                cps_value = self._build_cps_measurement()
+                self._server.get_characteristic(CPS_MEASUREMENT_UUID).value = cps_value
+                self._server.update_value(CPS_SERVICE_UUID, CPS_MEASUREMENT_UUID)
+        except Exception as e:
+            print(f"[BLE] CPS Notification error: {e}")
 
     # ========================================================================
     # Public API
@@ -354,19 +442,21 @@ class BLECadenceServer:
         """
         self._current_rpm = current_rpm
         if total_revolutions != self._cumulative_revolutions:
-            delta_revs = total_revolutions - self._cumulative_revolutions
             self._cumulative_revolutions = total_revolutions
             
-            # Use smoothed RPM to calculate precise, jitter-free event times.
-            # This completely eliminates frame-rate and thread-sleep timing jitter.
-            if self._current_rpm >= 1.0:
-                delta_time = delta_revs * (60.0 / self._current_rpm)
-                delta_units = int(delta_time * 1024)
-                self._last_event_time_1024 = (self._last_event_time_1024 + delta_units) & 0xFFFF
-            else:
-                event_time = last_event_time if last_event_time is not None else time.time()
-                elapsed = event_time - self._base_time
-                self._last_event_time_1024 = int(elapsed * 1024) & 0xFFFF
+            # Use the actual timestamp when the revolution occurred to prevent
+            # timing drift and out-of-sync packets that confuse MyWhoosh.
+            event_time = last_event_time if last_event_time is not None else time.time()
+            elapsed = event_time - self._base_time
+            self._last_event_time_1024 = int(elapsed * 1024) & 0xFFFF
+            
+            # Schedule immediate BLE notification to ensure the packet arrives
+            # at MyWhoosh with precise event-driven arrival spacing.
+            if self._loop is not None:
+                try:
+                    asyncio.run_coroutine_threadsafe(self._send_csc_notification(), self._loop)
+                except Exception:
+                    pass
 
     def _run_loop(self):
         self._loop = asyncio.new_event_loop()
@@ -392,7 +482,10 @@ class BLECadenceServer:
             except RuntimeError:
                 pass
         if self._thread is not None:
-            self._thread.join(timeout=3.0)
+            try:
+                self._thread.join(timeout=3.0)
+            except KeyboardInterrupt:
+                pass
         self._status = "Off"
         print("[BLE] Server stopped.")
 

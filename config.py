@@ -13,13 +13,13 @@ import numpy as np
 #   Orange: H 10-25 | Red: H 0-10 + 170-180 | Yellow: H 25-35
 #   Green: H 36-66   | Blue: H 90-130
 # ============================================================================
-HSV_LOWER = np.array([42, 45, 74])
-HSV_UPPER = np.array([72, 255, 255])
+HSV_LOWER = np.array([38, 35, 52])
+HSV_UPPER = np.array([68, 255, 255])
 
 # ============================================================================
 # CAMERA
 # ============================================================================
-CAMERA_INDEX = 1          # 0=built-in webcam, 1=iPhone via IriunWebcam (usually)
+CAMERA_INDEX = 0          # 0=built-in webcam, 1=iPhone via IriunWebcam (usually)
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
@@ -51,7 +51,7 @@ TRACKING_FIT_WINDOW = 150
 # to 28 bytes. If the name is >10 chars, bless may drop the service UUIDs
 # from the advertisement, so apps like MyWhoosh can't find the device.
 BLE_DEVICE_NAME = "VeloTrack"  # 9 chars - safe
-BLE_NOTIFY_INTERVAL_SEC = 0.25  # 4Hz heartbeat for smoother updates and fewer drops
+BLE_NOTIFY_INTERVAL_SEC = 0.5  # 2Hz heartbeat (PeloMon-proven value)
 WHEEL_TO_CRANK_RATIO = 2.0          # 1 pedal rev = 2 wheel revs (50x11)
 WHEEL_CIRCUMFERENCE_M = 2.105       # 700x25C road tire
 
