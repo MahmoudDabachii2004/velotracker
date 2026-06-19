@@ -83,6 +83,68 @@ if platform.system() == "Windows":
 
         bless_adapter.BLEAdapter.__init__ = patched_init
         print("[BLE Patch] Applied Windows BLEAdapter monkeypatch successfully.")
+
+        # Monkeypatch GattServiceProvider to handle the start_advertising parameter count issue on Windows
+        try:
+            import winrt.windows.devices.bluetooth.genericattributeprofile as gap
+            import bless.backends.winrt.server as bless_server
+            
+            orig_GattServiceProvider = gap.GattServiceProvider
+
+            class GattServiceProviderWrapper:
+                def __init__(self, obj):
+                    self._obj = obj
+
+                def __getattr__(self, name):
+                    attr = getattr(self._obj, name)
+                    if callable(attr) and name == "start_advertising":
+                        def patched_start_advertising(*args, **kwargs):
+                            try:
+                                return attr(*args, **kwargs)
+                            except TypeError as te:
+                                if "parameter" in str(te).lower():
+                                    print("[BLE Patch] start_advertising failed with parameters. Retrying with no parameters...")
+                                    return attr()
+                                raise te
+                        return patched_start_advertising
+                    return attr
+
+            class GattServiceProviderResultWrapper:
+                def __init__(self, obj):
+                    self._obj = obj
+
+                @property
+                def error(self):
+                    return self._obj.error
+
+                @property
+                def service_provider(self):
+                    provider = self._obj.service_provider
+                    if provider is not None:
+                        return GattServiceProviderWrapper(provider)
+                    return None
+
+                def __getattr__(self, name):
+                    return getattr(self._obj, name)
+
+            # Replace create_async to return our result wrapper
+            @classmethod
+            async def patched_create_async(cls, *args, **kwargs):
+                result = await orig_GattServiceProvider.create_async(*args, **kwargs)
+                return GattServiceProviderResultWrapper(result)
+
+            GattServiceProviderWrapper.create_async = patched_create_async
+
+            # Apply replacement in the winrt module
+            gap.GattServiceProvider = GattServiceProviderWrapper
+            
+            # Apply replacement in the bless winrt server module
+            if hasattr(bless_server, "GattServiceProvider"):
+                bless_server.GattServiceProvider = GattServiceProviderWrapper
+                
+            print("[BLE Patch] Applied Windows GattServiceProvider start_advertising monkeypatch successfully.")
+        except Exception as e:
+            print(f"[BLE Patch] Failed to apply Windows GattServiceProvider monkeypatch: {e}")
     except Exception as e:
         print(f"[BLE Patch] Failed to apply Windows BLEAdapter monkeypatch: {e}")
 
