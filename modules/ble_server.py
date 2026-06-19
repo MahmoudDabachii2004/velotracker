@@ -91,58 +91,93 @@ if platform.system() == "Windows":
             
             orig_GattServiceProvider = gap.GattServiceProvider
 
-            class GattServiceProviderWrapper:
-                def __init__(self, obj):
-                    self._obj = obj
+            # Try subclassing first (most elegant & native)
+            try:
+                class GattServiceProviderSubclass(orig_GattServiceProvider):
+                    def start_advertising(self, *args, **kwargs):
+                        try:
+                            return super().start_advertising(*args, **kwargs)
+                        except TypeError as te:
+                            if "parameter" in str(te).lower():
+                                print("[BLE Patch] start_advertising failed with parameters. Retrying with no parameters...")
+                                return super().start_advertising()
+                            raise te
 
-                def __getattr__(self, name):
-                    attr = getattr(self._obj, name)
-                    if callable(attr) and name == "start_advertising":
-                        def patched_start_advertising(*args, **kwargs):
-                            try:
-                                return attr(*args, **kwargs)
-                            except TypeError as te:
-                                if "parameter" in str(te).lower():
-                                    print("[BLE Patch] start_advertising failed with parameters. Retrying with no parameters...")
-                                    return attr()
-                                raise te
-                        return patched_start_advertising
-                    return attr
-
-            class GattServiceProviderResultWrapper:
-                def __init__(self, obj):
-                    self._obj = obj
-
-                @property
-                def error(self):
-                    return self._obj.error
-
-                @property
-                def service_provider(self):
-                    provider = self._obj.service_provider
-                    if provider is not None:
-                        return GattServiceProviderWrapper(provider)
-                    return None
-
-                def __getattr__(self, name):
-                    return getattr(self._obj, name)
-
-            # Replace create_async to return our result wrapper
-            @classmethod
-            async def patched_create_async(cls, *args, **kwargs):
-                result = await orig_GattServiceProvider.create_async(*args, **kwargs)
-                return GattServiceProviderResultWrapper(result)
-
-            GattServiceProviderWrapper.create_async = patched_create_async
-
-            # Apply replacement in the winrt module
-            gap.GattServiceProvider = GattServiceProviderWrapper
-            
-            # Apply replacement in the bless winrt server module
-            if hasattr(bless_server, "GattServiceProvider"):
-                bless_server.GattServiceProvider = GattServiceProviderWrapper
+                # Apply replacement in the winrt module
+                gap.GattServiceProvider = GattServiceProviderSubclass
                 
-            print("[BLE Patch] Applied Windows GattServiceProvider start_advertising monkeypatch successfully.")
+                # Apply replacement in the bless winrt server module
+                if hasattr(bless_server, "GattServiceProvider"):
+                    bless_server.GattServiceProvider = GattServiceProviderSubclass
+                    
+                print("[BLE Patch] Applied Windows GattServiceProvider start_advertising subclass monkeypatch successfully.")
+
+            except TypeError as subclass_err:
+                # If subclassing is not allowed (some C types are not subclassable), fallback to a robust delegation wrapper
+                print(f"[BLE Patch] Subclassing GattServiceProvider not supported ({subclass_err}). Using safe delegation wrapper...")
+                
+                class GattServiceProviderWrapper:
+                    def __init__(self, obj):
+                        self._obj = obj
+
+                    def __getattr__(self, name):
+                        if name == "_obj":
+                            raise AttributeError("_obj")
+                        # Safe guard against uninitialized _obj (e.g. C++ instantiation bypass)
+                        if "_obj" not in self.__dict__:
+                            raise AttributeError(f"GattServiceProviderWrapper has no attribute '{name}' (uninitialized)")
+                        
+                        attr = getattr(self._obj, name)
+                        if callable(attr) and name == "start_advertising":
+                            def patched_start_advertising(*args, **kwargs):
+                                try:
+                                    return attr(*args, **kwargs)
+                                except TypeError as te:
+                                    if "parameter" in str(te).lower():
+                                        print("[BLE Patch] start_advertising failed with parameters. Retrying with no parameters...")
+                                        return attr()
+                                    raise te
+                            return patched_start_advertising
+                        return attr
+
+                class GattServiceProviderResultWrapper:
+                    def __init__(self, obj):
+                        self._obj = obj
+
+                    @property
+                    def error(self):
+                        return self._obj.error
+
+                    @property
+                    def service_provider(self):
+                        provider = self._obj.service_provider
+                        if provider is not None:
+                            return GattServiceProviderWrapper(provider)
+                        return None
+
+                    def __getattr__(self, name):
+                        if name == "_obj":
+                            raise AttributeError("_obj")
+                        if "_obj" not in self.__dict__:
+                            raise AttributeError(f"GattServiceProviderResultWrapper has no attribute '{name}' (uninitialized)")
+                        return getattr(self._obj, name)
+
+                @classmethod
+                async def patched_create_async(cls, *args, **kwargs):
+                    result = await orig_GattServiceProvider.create_async(*args, **kwargs)
+                    return GattServiceProviderResultWrapper(result)
+
+                # Assign static method
+                GattServiceProviderWrapper.create_async = patched_create_async
+
+                # Apply replacement in the winrt module
+                gap.GattServiceProvider = GattServiceProviderWrapper
+                
+                # Apply replacement in the bless winrt server module
+                if hasattr(bless_server, "GattServiceProvider"):
+                    bless_server.GattServiceProvider = GattServiceProviderWrapper
+                    
+                print("[BLE Patch] Applied Windows GattServiceProvider start_advertising delegation monkeypatch successfully.")
         except Exception as e:
             print(f"[BLE Patch] Failed to apply Windows GattServiceProvider monkeypatch: {e}")
     except Exception as e:
