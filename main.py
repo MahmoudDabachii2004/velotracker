@@ -93,7 +93,12 @@ def main():
                 print("[Main] Camera read error")
                 break
 
-            detection = detector.detect(frame)
+            # Pass the fitted rotation circle as a Region of Interest (ROI) to crop the frame
+            roi_circle = None
+            if rpm_calc.phase == rpm_calc.PHASE_TRACKING and rpm_calc.center is not None:
+                roi_circle = (rpm_calc.center[0], rpm_calc.center[1], rpm_calc.radius)
+
+            detection = detector.detect(frame, roi_circle=roi_circle)
             now = time.time()
             if detection is not None:
                 rpm_calc.update(detection.cx, detection.cy, now)

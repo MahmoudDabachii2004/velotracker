@@ -63,6 +63,17 @@ WHEEL_TO_CRANK_RATIO = 2.0          # 1 pedal rev = 2 wheel revs (50x11)
 WHEEL_CIRCUMFERENCE_M = 2.105       # 700x25C road tire
 
 # ============================================================================
+# POWER SIMULATION (zPower)
+# ============================================================================
+# Choice of model for estimated power (Watts):
+#   "linear" -> Simple linear approximation: Watts = RPM * 0.8 + 30
+#   "fluid"  -> Kurt Kinetic Road Machine fluid trainer (polynomial curve)
+#               Formula: Power = 5.244820 * S + 0.01968 * S^3 (where S is speed in mph)
+#   "mag"    -> Standard magnetic trainer (quadratic curve)
+#               Formula: Power = 0.1 * S^2 + 3.0 * S + 10 (where S is speed in km/h)
+POWER_MODEL = "fluid"
+
+# ============================================================================
 # DASHBOARD COLORS
 # ============================================================================
 TRAIL_LENGTH = 30

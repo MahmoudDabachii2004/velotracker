@@ -200,6 +200,28 @@ class BLECadenceServer:
     def _write_request(self, characteristic: BlessGATTCharacteristic, value: Any, **kwargs):
         characteristic.value = value
 
+    def _calculate_power(self, rpm: float) -> int:
+        if rpm < 1.0:
+            return 0
+        
+        model = getattr(config, "POWER_MODEL", "linear").lower()
+        if model == "linear":
+            power = rpm * 0.8 + 30.0
+        else:
+            ratio = getattr(config, "WHEEL_TO_CRANK_RATIO", 2.0)
+            circ = getattr(config, "WHEEL_CIRCUMFERENCE_M", 2.105)
+            speed_kmh = (rpm * ratio * circ * 60.0) / 1000.0
+            
+            if model == "fluid":
+                speed_mph = speed_kmh / 1.609344
+                power = 5.244820 * speed_mph + 0.01968 * (speed_mph ** 3)
+            elif model == "mag":
+                power = 0.1 * (speed_kmh ** 2) + 3.0 * speed_kmh + 10.0
+            else:
+                power = rpm * 0.8 + 30.0
+                
+        return int(max(0, min(0x7FFF, power)))
+
     # ========================================================================
     # Packet builders
     # ========================================================================
@@ -243,7 +265,7 @@ class BLECadenceServer:
             # Cadence in 0.5 rpm units
             cadence_raw = int(max(0, min(0xFFFF, self._current_rpm * 2.0)))
             # Power in Watts (sint16)
-            power_w = int(max(0, min(0x7FFF, self._current_rpm * 0.8 + 30.0))) if self._current_rpm >= 1.0 else 0
+            power_w = self._calculate_power(self._current_rpm)
         return bytearray(struct.pack("<HHHh", flags, speed_raw, cadence_raw, power_w))
 
     def _build_cps_feature(self) -> bytearray:
@@ -263,7 +285,7 @@ class BLECadenceServer:
         """
         with self._lock:
             flags = 0x0020  # Crank Revolution Data Present (Bit 5)
-            power_w = int(max(0, min(0x7FFF, self._current_rpm * 0.8 + 30.0))) if self._current_rpm >= 1.0 else 0
+            power_w = self._calculate_power(self._current_rpm)
             crank_revs = self._cumulative_revolutions & 0xFFFF
             crank_time = self._last_event_time_1024 & 0xFFFF
         return bytearray(struct.pack("<HhHH", flags, power_w, crank_revs, crank_time))

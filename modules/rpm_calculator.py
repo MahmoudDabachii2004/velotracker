@@ -9,6 +9,73 @@ import numpy as np
 import config
 
 
+class StickerKalmanFilter:
+    def __init__(self, q: float = 100000.0, r: float = 9.0):
+        self.q = q
+        self.r = r
+        self.state = None
+        self.P = np.eye(4) * 10.0
+        self.last_time = None
+
+    def reset(self):
+        self.state = None
+        self.P = np.eye(4) * 10.0
+        self.last_time = None
+
+    def predict_and_update(self, x: float, y: float, timestamp: float) -> Tuple[float, float]:
+        if self.last_time is None or self.state is None:
+            self.state = np.array([x, y, 0.0, 0.0])
+            self.P = np.eye(4) * 10.0
+            self.last_time = timestamp
+            return x, y
+
+        dt = timestamp - self.last_time
+        if dt <= 0:
+            return float(self.state[0]), float(self.state[1])
+
+        dt = min(dt, 0.2)
+
+        F = np.array([
+            [1.0, 0.0,  dt, 0.0],
+            [0.0, 1.0, 0.0,  dt],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ])
+
+        dt2 = dt * dt
+        dt3 = dt2 * dt
+        Q = self.q * np.array([
+            [dt3 / 3.0, 0.0,       dt2 / 2.0, 0.0],
+            [0.0,       dt3 / 3.0, 0.0,       dt2 / 2.0],
+            [dt2 / 2.0, 0.0,       dt,        0.0],
+            [0.0,       dt2 / 2.0, 0.0,       dt]
+        ])
+
+        self.state = np.dot(F, self.state)
+        self.P = np.dot(F, np.dot(self.P, F.T)) + Q
+
+        H = np.array([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0]
+        ])
+        R = np.eye(2) * self.r
+        z = np.array([x, y])
+        y_residual = z - np.dot(H, self.state)
+        S = np.dot(H, np.dot(self.P, H.T)) + R
+        
+        try:
+            S_inv = np.linalg.inv(S)
+            K = np.dot(self.P, np.dot(H.T, S_inv))
+            self.state = self.state + np.dot(K, y_residual)
+            self.P = np.dot(np.eye(4) - np.dot(K, H), self.P)
+        except np.linalg.LinAlgError:
+            self.reset()
+            self.state = np.array([x, y, 0.0, 0.0])
+
+        self.last_time = timestamp
+        return float(self.state[0]), float(self.state[1])
+
+
 class RPMCalculator:
     PHASE_WAITING = "WAITING"
     PHASE_CALIBRATING = "CALIBRATING"
@@ -41,6 +108,7 @@ class RPMCalculator:
         self._rotation_direction = 1.0
         self._omega = 0.0
         self._alpha = 0.0
+        self._kalman = StickerKalmanFilter()
 
     def reset_center(self):
         self._center = None
@@ -55,6 +123,7 @@ class RPMCalculator:
         self._is_predicted = False
         self._omega = 0.0
         self._alpha = 0.0
+        self._kalman.reset()
 
     def _fit_circle(self, positions):
         """Taubin algebraic circle fit — better than Kasa for partial arcs."""
@@ -146,6 +215,14 @@ class RPMCalculator:
         if timestamp is None:
             timestamp = time.time()
         self._last_detection_time = timestamp
+
+        if self._phase == self.PHASE_TRACKING:
+            if self._kalman.last_time is not None and (timestamp - self._kalman.last_time > config.RPM_TIMEOUT_SEC):
+                self._kalman.reset()
+            cx_filt, cy_filt = self._kalman.predict_and_update(cx, cy, timestamp)
+            cx = int(round(cx_filt))
+            cy = int(round(cy_filt))
+
         self._trail.append((cx, cy))
 
         if self._phase == self.PHASE_WAITING:
