@@ -135,6 +135,13 @@ CAMERA_INDEX = 0
 ```
 Change to the index you found in step 4 (e.g. `CAMERA_INDEX = 1`).
 
+### 6. Tuning Advanced parameters (Optional)
+You can customize these parameters in `config.py`:
+* **CLAHE_CLIP_LIMIT** (Default `3.0`): Local contrast enhancement limit. Higher values increase contrast but can add noise.
+* **RPM_DECAY_FACTOR** (Default `0.85`): Per-frame decay rate of RPM when prediction/detection is lost.
+* **RPM_EMA_ALPHA** (Default `0.15`): Dashboard RPM smoothing factor.
+* **RPM_WEIGHTED_OLS_LAMBDA** (Default `2.0`): Temporal weight decay factor for RPM estimation. Higher values make the system respond faster to speed changes.
+
 ### 6. Calibrate your sticker
 1. Stick a bright colored sticker (green/orange/pink) on the pedal.
 2. Mount iPhone to see the pedal making a full circle.
@@ -181,15 +188,15 @@ python ble_diagnostic.py       # Windows
 You should see:
 ```
 [BLE] Background thread started.
-[BLE] Creating BlessServer 'VeloTrack'...
+[BLE] Creating BlessServer 'V'...
 [BLE] Adding CSC service (0x1816)...
 [BLE] Adding FTMS service (0x1826)...
 [BLE] Starting advertising...
-[BLE] 'VeloTrack' is advertising.
-[BLE] Open MyWhoosh -> Device Connection -> Controllable -> pair with 'VeloTrack'.
+[BLE] 'V' is advertising.
+[BLE] Open MyWhoosh -> Device Connection -> Controllable -> pair with 'V'.
 ```
 
-Open MyWhoosh → Device Connection → tap **Controllable** → pair with "VeloTrack".
+Open MyWhoosh → Device Connection → tap **Controllable** → pair with "V".
 You should see ~9.5 km/h, ~75 RPM, ~90 W.
 
 ### Step B — Full pipeline
@@ -281,14 +288,16 @@ VeloTracker/
 
 ## How RPM is computed
 
-1. **HSV color detection** finds the sticker's centroid each frame.
-2. **Light EMA smoothing** reduces jitter (~8ms latency).
-3. **Kasa circle fit** (first 90 frames): algebraic fit finds rotation center + radius. CV < 0.5 required.
-4. **Continuous center adjustment**: circle is re-fit on last 150 positions.
-5. **Phase unwrapping**: `atan2(dy, dx)` unwrapped across +/- pi gives continuous total angle.
-6. **OLS regression**: 20-frame sliding window fits (time, total_angle). Slope = angular velocity = RPM.
-7. **Glitch rejection**: angle delta > 1 rad/frame is rejected.
-8. **Circular predictor**: if detection lost up to 3 sec, predicts position from current RPM and continues counting.
+1. **Bilateral filtering** smooths color noise while preserving sticker edges.
+2. **CLAHE local contrast normalization** on the Value (brightness) channel makes detection highly robust to shadows and changing lighting.
+3. **HSV color detection** finds the sticker's centroid each frame.
+4. **Light EMA smoothing** reduces jitter.
+5. **Taubin circle fit** (first 90 frames): O(n) algebraic fit finds rotation center + radius. Taubin is much more stable than Kasa for partial arcs (short calibration times).
+6. **Continuous center adjustment**: circle is re-fit on last 150 positions.
+7. **Phase unwrapping**: `atan2(dy, dx)` unwrapped across +/- pi gives continuous total angle.
+8. **Weighted OLS regression**: 20-frame sliding window fits (time, total_angle) using exponential decay weights (recent samples count more). This responds faster to accelerations/decelerations.
+9. **Glitch rejection**: angle delta > 1 rad/frame is rejected.
+10. **Circular predictor with acceleration**: if detection is lost, predicts position using the last known velocity and angular acceleration (linear extrapolation), decaying naturally to a stop, and counting revolutions for up to 3 seconds.
 
 ---
 

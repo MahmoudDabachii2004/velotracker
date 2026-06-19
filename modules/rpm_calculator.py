@@ -39,6 +39,8 @@ class RPMCalculator:
         self._is_predicted = False
         self._predicted_position: Optional[Tuple[float, float]] = None
         self._rotation_direction = 1.0
+        self._omega = 0.0
+        self._alpha = 0.0
 
     def reset_center(self):
         self._center = None
@@ -51,44 +53,94 @@ class RPMCalculator:
         self._tracking_positions.clear()
         self._current_rpm = 0.0
         self._is_predicted = False
+        self._omega = 0.0
+        self._alpha = 0.0
 
     def _fit_circle(self, positions):
-        """Kasa algebraic circle fit. Returns (center, radius, cv)."""
-        n = len(positions)
+        """Taubin algebraic circle fit — better than Kasa for partial arcs."""
+        pts = np.array(positions, dtype=np.float64)
+        n = len(pts)
         if n < 5:
             return None, 0.0, float('inf')
 
-        sum_x = sum(p[0] for p in positions)
-        sum_y = sum(p[1] for p in positions)
-        sum_x2 = sum(p[0]**2 for p in positions)
-        sum_y2 = sum(p[1]**2 for p in positions)
-        sum_xy = sum(p[0]*p[1] for p in positions)
-        sum_x3 = sum(p[0]**3 for p in positions)
-        sum_y3 = sum(p[1]**3 for p in positions)
-        sum_x2y = sum(p[0]**2 * p[1] for p in positions)
-        sum_xy2 = sum(p[0] * p[1]**2 for p in positions)
+        # Centering data for numerical stability
+        centroid = np.mean(pts, axis=0)
+        u = pts[:, 0] - centroid[0]
+        v = pts[:, 1] - centroid[1]
+        z = u**2 + v**2
 
-        A = n * sum_x2 - sum_x**2
-        B = n * sum_xy - sum_x * sum_y
-        C = n * sum_y2 - sum_y**2
-        D = 0.5 * (n * (sum_x3 + sum_xy2) - sum_x * (sum_x2 + sum_y2))
-        E = 0.5 * (n * (sum_x2y + sum_y3) - sum_y * (sum_x2 + sum_y2))
+        # Compute moments
+        Mxx = np.mean(u**2)
+        Myy = np.mean(v**2)
+        Mxy = np.mean(u * v)
+        Mxz = np.mean(u * z)
+        Myz = np.mean(v * z)
+        Mzz = np.mean(z**2)
 
-        denom = A * C - B**2
-        if abs(denom) < 1e-10:
+        M_z = Mxx + Myy
+        Var_z = Mzz - M_z**2
+
+        # Form reduced moments matrix
+        M_reduced = np.array([
+            [Var_z, Mxz, Myz],
+            [Mxz, Mxx, Mxy],
+            [Myz, Mxy, Myy]
+        ])
+
+        # Form inverse of reduced constraint matrix N
+        if abs(M_z) < 1e-10:
             return None, 0.0, float('inf')
 
-        cx = (D * C - B * E) / denom
-        cy = (A * E - B * D) / denom
+        N_inv = np.array([
+            [1.0 / (4.0 * M_z), 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0]
+        ])
 
-        dists = [math.sqrt((p[0]-cx)**2 + (p[1]-cy)**2) for p in positions]
-        r = sum(dists) / n
-        if r > 0:
-            std = (sum((d-r)**2 for d in dists) / n) ** 0.5
-            cv = std / r
-        else:
-            cv = float('inf')
-        return (cx, cy), r, cv
+        try:
+            # Solve standard eigenvalue problem
+            D = np.dot(N_inv, M_reduced)
+            eigenvalues, eigenvectors = np.linalg.eig(D)
+
+            # Convert to real to handle numerical noise
+            eigenvalues = np.real(eigenvalues)
+            eigenvectors = np.real(eigenvectors)
+
+            # Find the smallest positive eigenvalue
+            pos_idx = np.where(eigenvalues > 1e-10)[0]
+            if len(pos_idx) == 0:
+                pos_idx = np.where(eigenvalues >= 0)[0]
+                if len(pos_idx) == 0:
+                    return None, 0.0, float('inf')
+
+            min_pos_idx = pos_idx[np.argmin(eigenvalues[pos_idx])]
+            v_eigen = eigenvectors[:, min_pos_idx]
+
+            A1, A2, A3 = v_eigen[0], v_eigen[1], v_eigen[2]
+            A4 = -M_z * A1
+
+            if abs(A1) < 1e-10:
+                return None, 0.0, float('inf')
+
+            # Reconstruct center and radius
+            u_c = -A2 / (2.0 * A1)
+            v_c = -A3 / (2.0 * A1)
+
+            r2 = u_c**2 + v_c**2 - A4 / A1
+            if r2 < 0:
+                return None, 0.0, float('inf')
+
+            r = np.sqrt(r2)
+            center = (u_c + centroid[0], v_c + centroid[1])
+
+            # Compute residual error (std of distances from fitted radius)
+            dists = np.sqrt((pts[:, 0] - center[0])**2 + (pts[:, 1] - center[1])**2)
+            std = np.std(dists)
+            cv = std / r if r > 0 else float('inf')
+
+            return center, r, cv
+        except Exception:
+            return None, 0.0, float('inf')
 
     def update(self, cx: int, cy: int, timestamp: Optional[float] = None):
         if timestamp is None:
@@ -172,7 +224,7 @@ class RPMCalculator:
         self._prev_angle = angle
         self._last_update_time = timestamp
         self._angular_window.append((timestamp, self._total_angle))
-        self._estimate_rpm()
+        self._estimate_rpm(timestamp)
         current_revs = int(abs(self._total_angle) / (2 * math.pi))
         if current_revs > self._rev_count:
             self._rev_count = current_revs
@@ -193,8 +245,17 @@ class RPMCalculator:
             return
         if time_since <= config.RPM_TIMEOUT_SEC:
             self._is_predicted = True
-            omega = self._rotation_direction * (self._current_rpm * 2 * math.pi / 60.0)
-            pa = self._prev_angle + omega * dt
+            # Extrapolate omega using angular acceleration (alpha)
+            omega_pred = self._omega + self._alpha * time_since
+            # Safety checks:
+            # 1. Don't reverse direction during prediction
+            if np.sign(omega_pred) != np.sign(self._omega):
+                omega_pred = 0.0
+            # 2. Cap prediction to not exceed 1.5x the last known omega to prevent run-away acceleration predictions
+            if abs(omega_pred) > 1.5 * abs(self._omega):
+                omega_pred = np.sign(self._omega) * 1.5 * abs(self._omega)
+                
+            pa = self._prev_angle + omega_pred * dt
             pred_x = self._center[0] + self._radius * math.cos(pa)
             pred_y = self._center[1] + self._radius * math.sin(pa)
             self._predicted_position = (pred_x, pred_y)
@@ -208,31 +269,61 @@ class RPMCalculator:
             self._prev_angle = pa
             self._last_update_time = timestamp
             self._angular_window.append((timestamp, self._total_angle))
-            self._estimate_rpm()
+            self._estimate_rpm(timestamp)
             current_revs = int(abs(self._total_angle) / (2 * math.pi))
             if current_revs > self._rev_count:
                 self._rev_count = current_revs
                 self._last_rev_event_time = timestamp
         else:
             self._is_predicted = False
-            self._current_rpm *= 0.85
+            # Decay factor when tracking is fully lost
+            decay_factor = getattr(config, "RPM_DECAY_FACTOR", 0.85)
+            self._current_rpm *= decay_factor
             if self._current_rpm < 1.0:
                 self._current_rpm = 0.0
 
-    def _estimate_rpm(self):
+    def _estimate_rpm(self, timestamp: float):
         if len(self._angular_window) < 5:
             return
-        n = len(self._angular_window)
-        t0 = self._angular_window[0][0]
-        sx = sy = sxx = sxy = 0.0
-        for t, theta in self._angular_window:
-            x = t - t0
-            y = theta
-            sx += x; sy += y; sxx += x*x; sxy += x*y
-        denom = n * sxx - sx**2
-        omega = (n * sxy - sx * sy) / denom if abs(denom) > 1e-6 else 0.0
+            
+        timestamps = np.array([pt[0] for pt in self._angular_window])
+        thetas = np.array([pt[1] for pt in self._angular_window])
+        
+        # Calculate weights using exponential decay (recent samples get higher weight)
+        decay = getattr(config, "RPM_WEIGHTED_OLS_LAMBDA", 2.0)
+        weights = np.exp(-decay * (timestamp - timestamps))
+        
+        # Center time vector to make it numerically stable
+        t0 = timestamps[0]
+        x = timestamps - t0
+        y = thetas
+        
+        Sw = np.sum(weights)
+        Sx = np.sum(weights * x)
+        Sy = np.sum(weights * y)
+        Sxx = np.sum(weights * x * x)
+        Sxy = np.sum(weights * x * y)
+        
+        denom = Sw * Sxx - Sx**2
+        omega = (Sw * Sxy - Sx * Sy) / denom if abs(denom) > 1e-6 else 0.0
+        
+        # Track rotation direction
         if abs(omega) > 0.1:
             self._rotation_direction = 1.0 if omega > 0 else -1.0
+            
+        # Calculate angular acceleration alpha = d_omega / dt with smoothing
+        prev_omega = self._omega
+        self._omega = omega
+        if len(self._angular_window) >= 2:
+            dt = timestamps[-1] - timestamps[-2]
+            if dt > 0:
+                raw_alpha = (omega - prev_omega) / dt
+                self._alpha = 0.1 * raw_alpha + 0.9 * self._alpha
+            else:
+                self._alpha = 0.0
+        else:
+            self._alpha = 0.0
+            
         self._raw_rpm = (abs(omega) / (2 * math.pi)) * 60.0
 
         if self._raw_rpm < config.RPM_MIN:
@@ -249,19 +340,18 @@ class RPMCalculator:
             if self._current_rpm < 1.0:
                 self._current_rpm = 0.0
         else:
-            self._current_rpm = self.EMA_RPM * target + (1 - self.EMA_RPM) * self._current_rpm
+            # Smooth EMA update
+            ema_alpha = getattr(config, "RPM_EMA_ALPHA", 0.15)
+            self._current_rpm = ema_alpha * target + (1 - ema_alpha) * self._current_rpm
 
     def check_timeout(self, current_time=None):
         if current_time is None:
             current_time = time.time()
         ts = current_time - self._last_detection_time
         if ts > config.RPM_TIMEOUT_SEC:
-            self._current_rpm *= 0.80
-            if self._current_rpm < 1.0:
-                self._current_rpm = 0.0
+            # If we timed out, stop immediately and cancel prediction
+            self._current_rpm = 0.0
             self._is_predicted = False
-        elif ts > 0.5 and not self._is_predicted:
-            self._current_rpm *= 0.90
 
     @property
     def rpm(self): return self._current_rpm
@@ -288,3 +378,7 @@ class RPMCalculator:
         return len(self._cal_positions) / config.CALIBRATION_FRAMES
     @property
     def trail(self): return list(self._trail)
+    @property
+    def alpha(self): return self._alpha
+    @property
+    def omega(self): return self._omega

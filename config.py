@@ -31,6 +31,8 @@ MIN_CONTOUR_AREA = 500
 MORPH_KERNEL_SIZE = 5
 MORPH_ITERATIONS = 2
 MIN_CIRCULARITY = 0.5
+CLAHE_CLIP_LIMIT = 3.0
+CLAHE_TILE_SIZE = 8       # Size of grid for local contrast equalization (e.g. 8x8)
 
 # ============================================================================
 # RPM CALCULATION
@@ -43,6 +45,11 @@ RPM_MAX = 200
 RPM_TIMEOUT_SEC = 3.0
 RPM_REGRESSION_WINDOW = 20
 TRACKING_FIT_WINDOW = 150
+
+# Advanced RPM Tuning
+RPM_DECAY_FACTOR = 0.85       # Per-frame decay factor when detection is lost
+RPM_EMA_ALPHA = 0.15          # Smoothing coefficient (EMA) for dashboard RPM
+RPM_WEIGHTED_OLS_LAMBDA = 2.0 # Exponential decay factor for weighted least-squares regression
 
 # ============================================================================
 # BLE (via bless — CoreBluetooth on macOS, WinRT on Windows, BlueZ on Linux)

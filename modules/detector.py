@@ -17,6 +17,7 @@ class DetectionResult:
     contour: np.ndarray
     area: float
     mask: np.ndarray
+    detection_confidence: float
 
 
 class ColorDetector:
@@ -27,10 +28,22 @@ class ColorDetector:
         self._kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
         self._smooth_cx: Optional[float] = None
         self._smooth_cy: Optional[float] = None
+        
+        # Initialize CLAHE for Value/Brightness normalization
+        clip_limit = getattr(config, "CLAHE_CLIP_LIMIT", 3.0)
+        tile_size = getattr(config, "CLAHE_TILE_SIZE", 8)
+        self._clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(tile_size, tile_size))
 
-    def detect(self, frame) -> Optional[DetectionResult]:
-        blurred = cv2.GaussianBlur(frame, (7, 7), 0)
+    def detect(self, frame, expected_position=None) -> Optional[DetectionResult]:
+        # Bilateral filter smooths color noise while preserving edges better than Gaussian blur
+        blurred = cv2.bilateralFilter(frame, 9, 75, 75)
         hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+        
+        # Apply CLAHE to the Value channel to normalize brightness/shadows locally
+        h, s, v = cv2.split(hsv)
+        v = self._clahe.apply(v)
+        hsv = cv2.merge((h, s, v))
+        
         mask = cv2.inRange(hsv, self._hsv_lower, self._hsv_upper)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kernel, iterations=config.MORPH_ITERATIONS)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._kernel, iterations=1)
@@ -49,19 +62,37 @@ class ColorDetector:
                 continue
             circ = 4 * np.pi * area / (perim ** 2)
             if circ >= config.MIN_CIRCULARITY:
-                valid.append((c, area))
+                M = cv2.moments(c)
+                if M["m00"] == 0:
+                    continue
+                cx = M["m10"] / M["m00"]
+                cy = M["m01"] / M["m00"]
+                
+                # Proximity filtering if expected position/path is known
+                if expected_position is not None:
+                    if len(expected_position) == 3:
+                        # (center_x, center_y, radius)
+                        ex_cx, ex_cy, ex_r = expected_position
+                        dist = np.sqrt((cx - ex_cx)**2 + (cy - ex_cy)**2)
+                        max_diff = max(25.0, ex_r * 0.3)
+                        if abs(dist - ex_r) > max_diff:
+                            continue
+                    elif len(expected_position) == 2:
+                        # (predicted_x, predicted_y)
+                        ex_cx, ex_cy = expected_position
+                        dist = np.sqrt((cx - ex_cx)**2 + (cy - ex_cy)**2)
+                        if dist > 50.0:
+                            continue
+                            
+                valid.append((c, area, cx, cy, circ))
 
         if not valid:
             return None
 
-        largest, area = max(valid, key=lambda x: x[1])
-
-        M = cv2.moments(largest)
-        if M["m00"] == 0:
-            return None
-
-        raw_cx = int(M["m10"] / M["m00"])
-        raw_cy = int(M["m01"] / M["m00"])
+        # Choose the largest matching contour
+        largest, area, cx, cy, circ = max(valid, key=lambda x: x[1])
+        raw_cx = int(cx)
+        raw_cy = int(cy)
 
         if self._smooth_cx is None:
             self._smooth_cx = float(raw_cx)
@@ -79,4 +110,5 @@ class ColorDetector:
             contour=largest,
             area=area,
             mask=mask,
+            detection_confidence=min(1.0, max(0.0, float(circ)))
         )

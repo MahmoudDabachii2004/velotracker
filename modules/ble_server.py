@@ -179,6 +179,7 @@ class BLECadenceServer:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._lock = threading.Lock()
 
         # CSC state
         self._cumulative_revolutions: int = 0
@@ -203,27 +204,46 @@ class BLECadenceServer:
     # Packet builders
     # ========================================================================
     def _build_csc_measurement(self) -> bytearray:
-        """CSC Measurement: flags + wheel + crank."""
-        flags = 0x03  # Wheel + Crank present
-        wheel_revs = int(self._cumulative_revolutions * config.WHEEL_TO_CRANK_RATIO) & 0xFFFFFFFF
-        wheel_time = self._last_event_time_1024 & 0xFFFF
-        crank_revs = self._cumulative_revolutions & 0xFFFF
-        crank_time = self._last_event_time_1024 & 0xFFFF
+        """CSC Measurement: flags + wheel + crank.
+        
+        Spec: CSC Measurement characteristic (0x2A5B).
+        Flags: Bit 0 (Wheel Revolution Data Present) = 1
+               Bit 1 (Crank Revolution Data Present) = 1
+        Format: flags (uint8), cumulative_wheel_revs (uint32), last_wheel_event_time (uint16),
+                cumulative_crank_revs (uint16), last_crank_event_time (uint16).
+        Units: last event times are in 1/1024 second units.
+        """
+        with self._lock:
+            flags = 0x03  # Wheel + Crank present
+            wheel_revs = int(self._cumulative_revolutions * config.WHEEL_TO_CRANK_RATIO) & 0xFFFFFFFF
+            wheel_time = self._last_event_time_1024 & 0xFFFF
+            crank_revs = self._cumulative_revolutions & 0xFFFF
+            crank_time = self._last_event_time_1024 & 0xFFFF
         return bytearray(struct.pack("<BIHHH", flags, wheel_revs, wheel_time, crank_revs, crank_time))
 
     def _build_indoor_bike_data(self) -> bytearray:
-        """FTMS Indoor Bike Data: flags + speed + cadence + power."""
-        flags = (1 << 2) | (1 << 6)  # cadence + power present
-        # Speed in 0.01 km/h:
-        # speed_kmh = (RPM * ratio * circumference * 60) / 1000.0
-        # speed_raw = speed_kmh * 100 = (RPM * ratio * circumference * 60) / 10.0
-        speed_raw_val = (self._current_rpm * config.WHEEL_TO_CRANK_RATIO
-                         * config.WHEEL_CIRCUMFERENCE_M * 60.0) / 10.0
-        speed_raw = int(max(0, min(0xFFFF, speed_raw_val)))
-        # Cadence in 0.5 rpm units
-        cadence_raw = int(max(0, min(0xFFFF, self._current_rpm * 2.0)))
-        # Simplified power (W)
-        power_w = int(max(0, min(0x7FFF, self._current_rpm * 0.8 + 30.0))) if self._current_rpm >= 1.0 else 0
+        """FTMS Indoor Bike Data: flags + speed + cadence + power.
+        
+        Spec: FTMS Indoor Bike Data characteristic (0x2AD2).
+        Flags (uint16): 
+          - Bit 0: More Data = 0 (implies instantaneous speed is present, uint16, 0.01 km/h)
+          - Bit 2: Average Speed present = 0
+          - Bit 2 (of flags value): Instantaneous Cadence present = 1 (uint16, 0.5 RPM)
+          - Bit 6: Instantaneous Power present = 1 (sint16, 1 Watt)
+        Layout: flags (16-bit), speed (16-bit), cadence (16-bit), power (16-bit signed).
+        """
+        with self._lock:
+            flags = (1 << 2) | (1 << 6)  # cadence + power present
+            # Speed in 0.01 km/h:
+            # speed_kmh = (RPM * ratio * circumference * 60) / 1000.0
+            # speed_raw = speed_kmh * 100 = (RPM * ratio * circumference * 60) / 10.0
+            speed_raw_val = (self._current_rpm * config.WHEEL_TO_CRANK_RATIO
+                             * config.WHEEL_CIRCUMFERENCE_M * 60.0) / 10.0
+            speed_raw = int(max(0, min(0xFFFF, speed_raw_val)))
+            # Cadence in 0.5 rpm units
+            cadence_raw = int(max(0, min(0xFFFF, self._current_rpm * 2.0)))
+            # Power in Watts (sint16)
+            power_w = int(max(0, min(0x7FFF, self._current_rpm * 0.8 + 30.0))) if self._current_rpm >= 1.0 else 0
         return bytearray(struct.pack("<HHHh", flags, speed_raw, cadence_raw, power_w))
 
     def _build_cps_feature(self) -> bytearray:
@@ -233,11 +253,19 @@ class BLECadenceServer:
         return bytearray(struct.pack("<I", feature))
 
     def _build_cps_measurement(self) -> bytearray:
-        """Cycling Power Measurement: flags + instantaneous power + crank data."""
-        flags = 0x0020  # Crank Revolution Data Present (Bit 5)
-        power_w = int(max(0, min(0x7FFF, self._current_rpm * 0.8 + 30.0))) if self._current_rpm >= 1.0 else 0
-        crank_revs = self._cumulative_revolutions & 0xFFFF
-        crank_time = self._last_event_time_1024 & 0xFFFF
+        """Cycling Power Measurement: flags + instantaneous power + crank data.
+        
+        Spec: CPS Measurement characteristic (0x2A63).
+        Flags (uint16): Bit 5 (Crank Revolution Data Present) = 1
+        Layout: flags (uint16), instantaneous_power (sint16), cumulative_crank_revs (uint16),
+                last_crank_event_time (uint16).
+        Units: last event times are in 1/1024 second units.
+        """
+        with self._lock:
+            flags = 0x0020  # Crank Revolution Data Present (Bit 5)
+            power_w = int(max(0, min(0x7FFF, self._current_rpm * 0.8 + 30.0))) if self._current_rpm >= 1.0 else 0
+            crank_revs = self._cumulative_revolutions & 0xFFFF
+            crank_time = self._last_event_time_1024 & 0xFFFF
         return bytearray(struct.pack("<HhHH", flags, power_w, crank_revs, crank_time))
 
     def _build_csc_feature(self) -> bytearray:
@@ -376,6 +404,7 @@ class BLECadenceServer:
                     break
                 await self._send_ftms_notification()
                 await self._send_cps_notification()
+                await self._send_csc_notification()
                 counter += 1
                 if counter % 5 == 0:
                     try:
@@ -383,15 +412,26 @@ class BLECadenceServer:
                         self._client_connected = bool(connected)
                     except Exception:
                         pass
+                    with self._lock:
+                        revs = self._cumulative_revolutions
+                        rpm = self._current_rpm
                     print(f"[BLE] Connected: {self._client_connected} | "
-                          f"Revs: {self._cumulative_revolutions} | "
-                          f"RPM: {self._current_rpm:.1f}")
+                          f"Revs: {revs} | "
+                          f"RPM: {rpm:.1f}")
 
         except Exception as e:
             self._status = f"Error: {e}"
             print(f"[BLE] ERROR: {e}")
             import traceback
             traceback.print_exc()
+        finally:
+            if self._server is not None:
+                try:
+                    print("[BLE] Stopping BlessServer...")
+                    await self._server.stop()
+                    print("[BLE] BlessServer stopped gracefully.")
+                except Exception as stop_err:
+                    print(f"[BLE] Error stopping BlessServer: {stop_err}")
 
     async def _send_csc_notification(self):
         """Send CSC notification immediately when a revolution occurs."""
@@ -442,23 +482,26 @@ class BLECadenceServer:
         - Each notification carries the REAL last_event_time
         - MyWhoosh computes cadence = 60 * (delta_revs / delta_event_time)
         """
-        self._current_rpm = current_rpm
-        if total_revolutions != self._cumulative_revolutions:
-            self._cumulative_revolutions = total_revolutions
-            
-            # Use the actual timestamp when the revolution occurred to prevent
-            # timing drift and out-of-sync packets that confuse MyWhoosh.
-            event_time = last_event_time if last_event_time is not None else time.time()
-            elapsed = event_time - self._base_time
-            self._last_event_time_1024 = int(elapsed * 1024) & 0xFFFF
-            
-            # Schedule immediate BLE notification to ensure the packet arrives
-            # at MyWhoosh with precise event-driven arrival spacing.
-            if self._loop is not None:
-                try:
-                    asyncio.run_coroutine_threadsafe(self._send_csc_notification(), self._loop)
-                except Exception:
-                    pass
+        should_notify = False
+        with self._lock:
+            self._current_rpm = current_rpm
+            if total_revolutions != self._cumulative_revolutions:
+                self._cumulative_revolutions = total_revolutions
+                
+                # Use the actual timestamp when the revolution occurred to prevent
+                # timing drift and out-of-sync packets that confuse MyWhoosh.
+                event_time = last_event_time if last_event_time is not None else time.time()
+                elapsed = event_time - self._base_time
+                self._last_event_time_1024 = int(elapsed * 1024) & 0xFFFF
+                should_notify = True
+                
+        # Schedule immediate BLE notification to ensure the packet arrives
+        # at MyWhoosh with precise event-driven arrival spacing.
+        if should_notify and self._loop is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(self._send_csc_notification(), self._loop)
+            except Exception:
+                pass
 
     def _run_loop(self):
         self._loop = asyncio.new_event_loop()

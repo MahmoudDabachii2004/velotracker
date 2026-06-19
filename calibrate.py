@@ -15,12 +15,12 @@ import sys
 import os
 import argparse
 import re
-import platform
 import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
+from modules.camera import Camera
 
 
 class Calibrator:
@@ -70,25 +70,11 @@ class Calibrator:
 
     def run(self, camera_index=None):
         idx = camera_index if camera_index is not None else config.CAMERA_INDEX
-        # Select best camera backend for current platform
-        _sys = platform.system()
-        if _sys == "Darwin":
-            backend = cv2.CAP_AVFOUNDATION
-        elif _sys == "Windows":
-            backend = cv2.CAP_DSHOW
-        elif _sys == "Linux":
-            backend = cv2.CAP_V4L2
-        else:
-            backend = cv2.CAP_ANY
-        cap = cv2.VideoCapture(idx, backend)
-        if not cap.isOpened():
-            cap = cv2.VideoCapture(idx)
-        if not cap.isOpened():
-            print(f"Cannot open camera index {idx}")
+        try:
+            camera = Camera(camera_index=idx)
+        except RuntimeError as e:
+            print(f"[Calib] ERROR: Cannot open camera index {idx}: {e}")
             return
-
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
 
         cv2.namedWindow(self._win)
         for name, val, mx in [("H min", self._h_min, 179), ("H max", self._h_max, 179),
@@ -102,7 +88,7 @@ class Calibrator:
 
         try:
             while True:
-                ok, frame = cap.read()
+                ok, frame = camera.read()
                 if not ok:
                     break
                 hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -167,7 +153,7 @@ class Calibrator:
                 elif key == ord('s'):
                     self._save()
         finally:
-            cap.release()
+            camera.release()
             cv2.destroyAllWindows()
 
 
