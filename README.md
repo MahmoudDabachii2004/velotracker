@@ -40,12 +40,12 @@ MyWhoosh runs on the **same computer** — it pairs with the local BLE server.
 ### macOS
 - **MacBook** (Intel or Apple Silicon M1/M2/M3)
 - **macOS 12+** (Monterey or newer)
-- **Python 3.9 – 3.13**
+- **Python 3.13.14** (Recommended) or any 3.9 - 3.13 version
 
 ### Windows
 - **Windows 10+** with a Bluetooth adapter that supports **BLE peripheral mode**
   (most built-in laptop Bluetooth works; some cheap USB dongles are central-only)
-- **Python 3.11 or 3.12** (bless pins `winrt-*==2.0.0b1` which lacks Python 3.13 wheels)
+- **Python 3.12.10** (Recommended) (Avoid Python 3.13 on Windows, as its BLE WinRT dependencies lack 3.13 wheels)
 
 ### Linux
 - **BlueZ** 5.43+ with D-Bus
@@ -63,12 +63,11 @@ MyWhoosh runs on the **same computer** — it pairs with the local BLE server.
 ### 2. Install Python
 
 #### **macOS**
-* **Recommended Python Version:** **Python 3.13** (Works with 3.9 - 3.13)
+* **Optimal Python Version:** **Python 3.13.14** (Works with 3.9 - 3.13)
 * **Method A: Official Installer (Recommended)**
-  1. Go to the [Official Python macOS Downloads page](https://www.python.org/downloads/macos/).
-  2. Download the installer for the latest Python 3.13 release (e.g., `python-3.13.x-macos11.pkg`).
-  3. Run the installer package and follow the instructions.
-  4. **Important post-install step:** Open `/Applications/Python 3.13` in Finder and double-click `Install Certificates.command`. This ensures SSL connections work properly.
+  1. Go to the [Python 3.13.14 Release Page](https://www.python.org/downloads/release/python-31314/).
+  2. Download and run the **macOS 64-bit universal2 installer**.
+  3. **Important post-install step:** Open `/Applications/Python 3.13` in Finder and double-click `Install Certificates.command`. This ensures SSL connections work properly.
 * **Method B: Homebrew**
   If you have Homebrew installed, open a terminal and run:
   ```bash
@@ -76,13 +75,12 @@ MyWhoosh runs on the **same computer** — it pairs with the local BLE server.
   ```
 
 #### **Windows**
-* **Recommended Python Version:** **Python 3.11 or 3.12** (Do **NOT** use Python 3.13 on Windows, as its BLE WinRT dependencies lack 3.13 wheels).
+* **Optimal Python Version:** **Python 3.12.10** (Do **NOT** use Python 3.13 on Windows, as its BLE WinRT dependencies lack 3.13 wheels. 3.12.10 is the latest 3.12 release that provides an official `.exe` binary installer; newer 3.12 releases are source-only).
 * **Method: Official Installer**
-  1. Go to the [Official Python Windows Downloads page](https://www.python.org/downloads/windows/).
-  2. Under the Python 3.12 or Python 3.11 release sections, download the **Windows Installer (64-bit)**.
-  3. Run the `.exe` installer.
-  4. **CRITICAL STEP:** Before clicking "Install Now", make sure to check the box at the bottom that says **"Add python.exe to PATH"**.
-  5. Follow the installer instructions to finish.
+  1. Go to the [Python 3.12.10 Release Page](https://www.python.org/downloads/release/python-31210/).
+  2. Download and run the **Windows installer (64-bit)**.
+  3. **CRITICAL STEP:** Before clicking "Install Now", make sure to check the box at the bottom that says **"Add python.exe to PATH"**.
+  4. Follow the installer instructions to finish.
 
 #### **Linux**
 * **Recommended Python Version:** **Python 3.9+**
