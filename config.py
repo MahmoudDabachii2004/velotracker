@@ -50,7 +50,7 @@ TRACKING_FIT_WINDOW = 150
 # IMPORTANT: Keep the name <=10 chars. macOS BLE advertisements are limited
 # to 28 bytes. If the name is >10 chars, bless may drop the service UUIDs
 # from the advertisement, so apps like MyWhoosh can't find the device.
-BLE_DEVICE_NAME = "VeloTrack"  # 9 chars - safe
+BLE_DEVICE_NAME = "Velo"  # 4 chars - saves 5 bytes of advertising space
 BLE_NOTIFY_INTERVAL_SEC = 0.5  # 2Hz heartbeat (PeloMon-proven value)
 WHEEL_TO_CRANK_RATIO = 2.0          # 1 pedal rev = 2 wheel revs (50x11)
 WHEEL_CIRCUMFERENCE_M = 2.105       # 700x25C road tire
