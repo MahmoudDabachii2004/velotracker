@@ -354,10 +354,19 @@ class BLECadenceServer:
         """
         self._current_rpm = current_rpm
         if total_revolutions != self._cumulative_revolutions:
+            delta_revs = total_revolutions - self._cumulative_revolutions
             self._cumulative_revolutions = total_revolutions
-            event_time = last_event_time if last_event_time is not None else time.time()
-            elapsed = event_time - self._base_time
-            self._last_event_time_1024 = int(elapsed * 1024) & 0xFFFF
+            
+            # Use smoothed RPM to calculate precise, jitter-free event times.
+            # This completely eliminates frame-rate and thread-sleep timing jitter.
+            if self._current_rpm >= 1.0:
+                delta_time = delta_revs * (60.0 / self._current_rpm)
+                delta_units = int(delta_time * 1024)
+                self._last_event_time_1024 = (self._last_event_time_1024 + delta_units) & 0xFFFF
+            else:
+                event_time = last_event_time if last_event_time is not None else time.time()
+                elapsed = event_time - self._base_time
+                self._last_event_time_1024 = int(elapsed * 1024) & 0xFFFF
 
     def _run_loop(self):
         self._loop = asyncio.new_event_loop()
