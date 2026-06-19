@@ -1,0 +1,11 @@
+# VeloTracker dependencies (macOS)
+# Install: pip3 install -r requirements.txt
+#
+# NOTE: This version uses bless with CoreBluetooth (native macOS BLE).
+# Works on Python 3.9 - 3.13. (Python 3.14 is not yet supported by bless.)
+#
+# macOS 12+ (Monterey or newer) is recommended.
+
+opencv-python>=4.8
+numpy>=1.24
+bless>=0.3.0
