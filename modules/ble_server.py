@@ -228,15 +228,17 @@ class BLECadenceServer:
 
     def _build_cps_feature(self) -> bytearray:
         # Cycling Power Feature:
-        # No optional features to prevent duplicate cadence data conflict with CSC.
-        feature = 0x00000000
+        # Bit 3: Crank Revolution Data Supported (value 0x00000008)
+        feature = 0x00000008
         return bytearray(struct.pack("<I", feature))
 
     def _build_cps_measurement(self) -> bytearray:
-        """Cycling Power Measurement: flags + instantaneous power."""
-        flags = 0x0000  # No optional fields (crank data is handled solely by CSC)
+        """Cycling Power Measurement: flags + instantaneous power + crank data."""
+        flags = 0x0020  # Crank Revolution Data Present (Bit 5)
         power_w = int(max(0, min(0x7FFF, self._current_rpm * 0.8 + 30.0))) if self._current_rpm >= 1.0 else 0
-        return bytearray(struct.pack("<Hh", flags, power_w))
+        crank_revs = self._cumulative_revolutions & 0xFFFF
+        crank_time = self._last_event_time_1024 & 0xFFFF
+        return bytearray(struct.pack("<HhHH", flags, power_w, crank_revs, crank_time))
 
     def _build_csc_feature(self) -> bytearray:
         return bytearray(struct.pack("<H", 0x0003))  # Wheel + Crank supported
@@ -263,24 +265,6 @@ class BLECadenceServer:
         cps_feature_value = self._build_cps_feature()
 
         gatt: Dict = {
-            # ============== CSC Service ==============
-            CSC_SERVICE_UUID: {
-                # CSC Measurement: Notify + Read -> Value must be None
-                CSC_MEASUREMENT_UUID: {
-                    "Properties": (
-                        GATTCharacteristicProperties.notify
-                        | GATTCharacteristicProperties.read
-                    ),
-                    "Permissions": GATTAttributePermissions.readable,
-                    "Value": None,
-                },
-                # CSC Feature: Read-only -> can have a static Value
-                CSC_FEATURE_UUID: {
-                    "Properties": GATTCharacteristicProperties.read,
-                    "Permissions": GATTAttributePermissions.readable,
-                    "Value": csc_feature_value,
-                },
-            },
             # ============== CPS Service ==============
             CPS_SERVICE_UUID: {
                 # CPS Measurement: Notify + Read -> Value must be None
@@ -297,6 +281,24 @@ class BLECadenceServer:
                     "Properties": GATTCharacteristicProperties.read,
                     "Permissions": GATTAttributePermissions.readable,
                     "Value": cps_feature_value,
+                },
+            },
+            # ============== CSC Service ==============
+            CSC_SERVICE_UUID: {
+                # CSC Measurement: Notify + Read -> Value must be None
+                CSC_MEASUREMENT_UUID: {
+                    "Properties": (
+                        GATTCharacteristicProperties.notify
+                        | GATTCharacteristicProperties.read
+                    ),
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": None,
+                },
+                # CSC Feature: Read-only -> can have a static Value
+                CSC_FEATURE_UUID: {
+                    "Properties": GATTCharacteristicProperties.read,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": csc_feature_value,
                 },
             },
             # ============== FTMS Service ==============
