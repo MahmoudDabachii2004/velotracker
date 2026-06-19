@@ -62,26 +62,48 @@ MyWhoosh runs on the **same computer** — it pairs with the local BLE server.
 
 ### 2. Install Python
 
-**macOS** (if not already installed):
-```
-brew install python@3.13
-```
-Or download from https://www.python.org/downloads/macos/
+#### **macOS**
+* **Recommended Python Version:** **Python 3.13** (Works with 3.9 - 3.13)
+* **Method A: Official Installer (Recommended)**
+  1. Go to the [Official Python macOS Downloads page](https://www.python.org/downloads/macos/).
+  2. Download the installer for the latest Python 3.13 release (e.g., `python-3.13.x-macos11.pkg`).
+  3. Run the installer package and follow the instructions.
+  4. **Important post-install step:** Open `/Applications/Python 3.13` in Finder and double-click `Install Certificates.command`. This ensures SSL connections work properly.
+* **Method B: Homebrew**
+  If you have Homebrew installed, open a terminal and run:
+  ```bash
+  brew install python@3.13
+  ```
 
-**Windows:**
-Download Python **3.11 or 3.12** from https://www.python.org/downloads/windows/
-> ⚠️ Do NOT use Python 3.13 on Windows — bless's WinRT dependencies don't have 3.13 wheels yet.
+#### **Windows**
+* **Recommended Python Version:** **Python 3.11 or 3.12** (Do **NOT** use Python 3.13 on Windows, as its BLE WinRT dependencies lack 3.13 wheels).
+* **Method: Official Installer**
+  1. Go to the [Official Python Windows Downloads page](https://www.python.org/downloads/windows/).
+  2. Under the Python 3.12 or Python 3.11 release sections, download the **Windows Installer (64-bit)**.
+  3. Run the `.exe` installer.
+  4. **CRITICAL STEP:** Before clicking "Install Now", make sure to check the box at the bottom that says **"Add python.exe to PATH"**.
+  5. Follow the installer instructions to finish.
 
-**Linux:**
-```
-sudo apt install python3 python3-pip   # Debian/Ubuntu
-```
+#### **Linux**
+* **Recommended Python Version:** **Python 3.9+**
+* Open your terminal and install via your package manager (e.g. Debian/Ubuntu):
+  ```bash
+  sudo apt update
+  sudo apt install python3 python3-pip python3-venv
+  ```
 
-Check it works:
+---
+
+#### **Verify Installation**
+Open your terminal (on macOS/Linux) or Command Prompt/PowerShell (on Windows) and verify the version:
+```bash
+# On macOS / Linux:
+python3 --version
+
+# On Windows:
+python --version
 ```
-python3 --version    # macOS/Linux
-python --version     # Windows
-```
+Ensure the version printed matches the guidelines above.
 
 ### 3. Install VeloTracker
 1. Extract this folder (or `git clone` the repo).
