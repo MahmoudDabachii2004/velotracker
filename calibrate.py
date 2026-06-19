@@ -1,4 +1,4 @@
-"""VeloTracker - Sticker color calibration (macOS).
+"""VeloTracker - Sticker color calibration (cross-platform).
 
 Usage:
     python3 calibrate.py
@@ -15,6 +15,7 @@ import sys
 import os
 import argparse
 import re
+import platform
 import cv2
 import numpy as np
 
@@ -69,7 +70,17 @@ class Calibrator:
 
     def run(self, camera_index=None):
         idx = camera_index if camera_index is not None else config.CAMERA_INDEX
-        cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
+        # Select best camera backend for current platform
+        _sys = platform.system()
+        if _sys == "Darwin":
+            backend = cv2.CAP_AVFOUNDATION
+        elif _sys == "Windows":
+            backend = cv2.CAP_DSHOW
+        elif _sys == "Linux":
+            backend = cv2.CAP_V4L2
+        else:
+            backend = cv2.CAP_ANY
+        cap = cv2.VideoCapture(idx, backend)
         if not cap.isOpened():
             cap = cv2.VideoCapture(idx)
         if not cap.isOpened():
@@ -161,7 +172,7 @@ class Calibrator:
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="VeloTracker Calibration (macOS)")
+    p = argparse.ArgumentParser(description="VeloTracker Calibration")
     p.add_argument("--camera", type=int, default=None)
     args = p.parse_args()
     Calibrator().run(camera_index=args.camera)

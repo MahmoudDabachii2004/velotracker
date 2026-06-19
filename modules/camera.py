@@ -1,8 +1,22 @@
-"""VeloTracker - Camera module (macOS)."""
+"""VeloTracker - Camera module (cross-platform)."""
 
 import cv2
 import time
+import platform
 import config
+
+# Select the best camera backend for the current platform.
+# Falls back to auto-detect if the preferred backend fails.
+_PLATFORM = platform.system()
+
+if _PLATFORM == "Darwin":
+    _PREFERRED_BACKEND = cv2.CAP_AVFOUNDATION
+elif _PLATFORM == "Windows":
+    _PREFERRED_BACKEND = cv2.CAP_DSHOW
+elif _PLATFORM == "Linux":
+    _PREFERRED_BACKEND = cv2.CAP_V4L2
+else:
+    _PREFERRED_BACKEND = cv2.CAP_ANY
 
 
 class Camera:
@@ -11,8 +25,8 @@ class Camera:
         self._width = width or config.CAMERA_WIDTH
         self._height = height or config.CAMERA_HEIGHT
 
-        # On macOS, AVFoundation backend is the most reliable
-        self._cap = cv2.VideoCapture(self._index, cv2.CAP_AVFOUNDATION)
+        # Try the preferred platform backend first, then fall back to auto-detect
+        self._cap = cv2.VideoCapture(self._index, _PREFERRED_BACKEND)
         if not self._cap.isOpened():
             self._cap = cv2.VideoCapture(self._index)
         if not self._cap.isOpened():
@@ -32,7 +46,7 @@ class Camera:
         self._fps_start_time = time.time()
         self._current_fps = 0.0
 
-        # Warmup (essential for IriunWebcam)
+        # Warmup (essential for IriunWebcam on all platforms)
         print("[Camera] Warming up...")
         for _ in range(30):
             if self._cap.read()[0]:
@@ -60,3 +74,4 @@ class Camera:
         if self._cap and self._cap.isOpened():
             self._cap.release()
             print("[Camera] Released.")
+

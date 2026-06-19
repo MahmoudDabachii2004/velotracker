@@ -1,5 +1,5 @@
 """
-VeloTracker - Configuration (macOS version)
+VeloTracker - Configuration (cross-platform)
 Edit this file to match your setup.
 """
 
@@ -19,7 +19,7 @@ HSV_UPPER = np.array([72, 255, 255])
 # ============================================================================
 # CAMERA
 # ============================================================================
-CAMERA_INDEX = 1          # 0=MacBook webcam, 1=iPhone via IriunWebcam (usually)
+CAMERA_INDEX = 1          # 0=built-in webcam, 1=iPhone via IriunWebcam (usually)
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
@@ -45,11 +45,11 @@ RPM_REGRESSION_WINDOW = 20
 TRACKING_FIT_WINDOW = 150
 
 # ============================================================================
-# BLE (macOS CoreBluetooth via bless)
+# BLE (via bless — CoreBluetooth on macOS, WinRT on Windows, BlueZ on Linux)
 # ============================================================================
 # IMPORTANT: Keep the name <=10 chars. macOS BLE advertisements are limited
-# to 28 bytes. If the name is >10 chars, bless drops the service UUIDs from
-# the advertisement, so apps like MyWhoosh can't find the device.
+# to 28 bytes. If the name is >10 chars, bless may drop the service UUIDs
+# from the advertisement, so apps like MyWhoosh can't find the device.
 BLE_DEVICE_NAME = "VeloTrack"  # 9 chars - safe
 BLE_NOTIFY_INTERVAL_SEC = 0.5  # 2Hz heartbeat (PeloMon-proven value)
 WHEEL_TO_CRANK_RATIO = 2.0          # 1 pedal rev = 2 wheel revs (50x11)

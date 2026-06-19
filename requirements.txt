@@ -1,11 +1,24 @@
-# VeloTracker dependencies (macOS)
-# Install: pip3 install -r requirements.txt
+# VeloTracker dependencies (cross-platform)
+# Install: pip install -r requirements.txt
 #
-# NOTE: This version uses bless with CoreBluetooth (native macOS BLE).
-# Works on Python 3.9 - 3.13. (Python 3.14 is not yet supported by bless.)
+# Supported platforms:
+#   macOS 12+   — Python 3.9-3.13
+#   Windows 10+ — Python 3.11-3.12 (bless pins winrt-* 2.0.0b1, no 3.13 wheels)
+#   Linux       — Python 3.9+ (requires BlueZ + D-Bus)
 #
-# macOS 12+ (Monterey or newer) is recommended.
 
+# === Core (all platforms) ===
 opencv-python>=4.8
 numpy>=1.24
 bless>=0.3.0
+
+# === Windows-only (auto-installed by bless on Windows) ===
+# pywin32                     — installed automatically
+# winrt-Windows.*==2.0.0b1    — installed automatically (Python 3.12+)
+# bleak-winrt>=1.2.0          — installed automatically (Python <3.12)
+#
+# MANUAL install required on Windows:
+#   pip install git+https://github.com/gwangyi/pysetupdi
+#
+# === Linux-only (auto-installed by bless on Linux) ===
+# dbus-next                   — installed automatically

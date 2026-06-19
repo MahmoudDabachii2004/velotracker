@@ -1,4 +1,4 @@
-"""VeloTracker - Main entry point (macOS).
+"""VeloTracker - Main entry point (cross-platform).
 
 Usage:
     python3 main.py                  Normal mode
@@ -30,7 +30,7 @@ from modules.ble_server import BLECadenceServer
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="VeloTracker - Bike -> MyWhoosh (macOS)")
+    p = argparse.ArgumentParser(description="VeloTracker - Bike -> MyWhoosh")
     p.add_argument("--camera", type=int, default=config.CAMERA_INDEX,
                    help=f"Camera index (default: {config.CAMERA_INDEX})")
     p.add_argument("--no-ble", action="store_true",
@@ -44,7 +44,7 @@ def main():
     args = parse_args()
 
     print("=" * 60)
-    print("  VeloTracker - Bike -> MyWhoosh (macOS)")
+    print("  VeloTracker - Bike -> MyWhoosh")
     print("=" * 60)
     print()
 

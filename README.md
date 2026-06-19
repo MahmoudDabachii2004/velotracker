@@ -1,10 +1,10 @@
-# VeloTracker (macOS)
+# VeloTracker
 
 Turn any old stationary bike into a smart trainer for **MyWhoosh** — for **$0**.
 
-VeloTracker uses your iPhone (as a webcam via IriunWebcam) pointed at the pedal, detects a colored sticker via OpenCV, computes your RPM, and broadcasts cadence + speed + power over Bluetooth Low Energy (BLE) using macOS's native CoreBluetooth. MyWhoosh sees it as a real Wahoo/Garmin-style sensor.
+VeloTracker uses your iPhone (as a webcam via IriunWebcam) pointed at the pedal, detects a colored sticker via OpenCV, computes your RPM, and broadcasts cadence + speed + power over Bluetooth Low Energy (BLE) using the **bless** library. MyWhoosh sees it as a real Wahoo/Garmin-style sensor.
 
-This version uses **bless + CoreBluetooth** on macOS — rock-solid BLE peripheral mode, no driver issues.
+**Cross-platform:** Works on macOS, Windows, and Linux.
 
 ---
 
@@ -14,10 +14,10 @@ This version uses **bless + CoreBluetooth** on macOS — rock-solid BLE peripher
 [iPhone + IriunWebcam]  (pointed at pedal)
             |
             v
-[MacBook running VeloTracker]
+[Computer running VeloTracker]
     |-- OpenCV: HSV color detection finds sticker
     |-- Kasa circle fit + OLS regression -> RPM
-    |-- bless + CoreBluetooth BLE server:
+    |-- bless BLE server:
     |       * CSC Service  (0x1816) -> cadence + speed
     |       * FTMS Service (0x1826) -> controllable trainer
             |
@@ -26,51 +26,80 @@ This version uses **bless + CoreBluetooth** on macOS — rock-solid BLE peripher
 [MyWhoosh pairs with "VeloTracker"]
 ```
 
-MyWhoosh runs on the **same MacBook** — it pairs with the local BLE server.
+MyWhoosh runs on the **same computer** — it pairs with the local BLE server.
 
 ---
 
 ## Prerequisites
 
-- **MacBook** (Intel or Apple Silicon M1/M2/M3)
-- **macOS 12+** (Monterey or newer)
-- **Python 3.9 - 3.13** (3.14 is not yet supported by bless)
+### All Platforms
 - **iPhone** with IriunWebcam (free from App Store)
 - A bright colored sticker (green/orange/pink/yellow)
 - A way to mount the iPhone to see the pedal
+
+### macOS
+- **MacBook** (Intel or Apple Silicon M1/M2/M3)
+- **macOS 12+** (Monterey or newer)
+- **Python 3.9 – 3.13**
+
+### Windows
+- **Windows 10+** with a Bluetooth adapter that supports **BLE peripheral mode**
+  (most built-in laptop Bluetooth works; some cheap USB dongles are central-only)
+- **Python 3.11 or 3.12** (bless pins `winrt-*==2.0.0b1` which lacks Python 3.13 wheels)
+
+### Linux
+- **BlueZ** 5.43+ with D-Bus
+- **Python 3.9+**
 
 ---
 
 ## Setup
 
 ### 1. Install IriunWebcam
-1. Download IriunWebcam from https://iriun.com/ on your Mac and iPhone.
+1. Download IriunWebcam from https://iriun.com/ on your computer and iPhone.
 2. Launch on both devices. They auto-connect over Wi-Fi.
-3. Your iPhone camera now appears as a webcam on the Mac.
+3. Your iPhone camera now appears as a webcam on the computer.
 
-### 2. Install Python (if not already)
-- **Easiest:** Install Homebrew first (https://brew.sh), then:
-  ```
-  brew install python@3.13
-  ```
-- Or download from https://www.python.org/downloads/macos/
+### 2. Install Python
+
+**macOS** (if not already installed):
+```
+brew install python@3.13
+```
+Or download from https://www.python.org/downloads/macos/
+
+**Windows:**
+Download Python **3.11 or 3.12** from https://www.python.org/downloads/windows/
+> ⚠️ Do NOT use Python 3.13 on Windows — bless's WinRT dependencies don't have 3.13 wheels yet.
+
+**Linux:**
+```
+sudo apt install python3 python3-pip   # Debian/Ubuntu
+```
 
 Check it works:
 ```
-python3 --version
+python3 --version    # macOS/Linux
+python --version     # Windows
 ```
 
 ### 3. Install VeloTracker
-1. Extract this folder to e.g. `~/VeloTracker`.
-2. Open Terminal in that folder.
+1. Extract this folder (or `git clone` the repo).
+2. Open a terminal in that folder.
 3. Run:
   ```
-  pip3 install -r requirements.txt
+  pip install -r requirements.txt
   ```
+
+**Windows only** — install the additional BLE dependency:
+```
+pip install git+https://github.com/gwangyi/pysetupdi
+```
 
 ### 4. Find your camera index
 ```
-python3 list_cameras.py
+python3 list_cameras.py       # macOS/Linux
+python list_cameras.py        # Windows
 ```
 You'll see something like:
 ```
@@ -80,7 +109,7 @@ You'll see something like:
 The higher-resolution one is usually IriunWebcam (your iPhone). Note the number.
 
 ### 5. Set camera index in config.py
-Open `config.py` in TextEdit. Find:
+Open `config.py` in a text editor. Find:
 ```python
 CAMERA_INDEX = 0
 ```
@@ -91,7 +120,8 @@ Change to the index you found in step 4 (e.g. `CAMERA_INDEX = 1`).
 2. Mount iPhone to see the pedal making a full circle.
 3. Run:
   ```
-  python3 calibrate.py
+  python3 calibrate.py         # macOS/Linux
+  python calibrate.py          # Windows
   ```
 4. In the calibration window, **click directly on the sticker**.
 5. Green contour should wrap around the sticker.
@@ -99,12 +129,23 @@ Change to the index you found in step 4 (e.g. `CAMERA_INDEX = 1`).
 
 ---
 
-## macOS Bluetooth permission
+## Bluetooth Permission
 
+### macOS
 The first time you run VeloTracker, macOS will pop up a dialog asking for **Bluetooth permission** for Terminal (or your Python interpreter). Click **OK**. Without this, the BLE server won't start.
 
 If you accidentally clicked "Don't Allow", go to:
 **System Settings → Privacy & Security → Bluetooth** → enable your Terminal/Python.
+
+### Windows
+Make sure Bluetooth is enabled in **Settings → Bluetooth & devices**. Your Bluetooth adapter must support BLE **peripheral** (advertising) mode. Most laptop adapters do; some USB dongles don't.
+
+### Linux
+Your user must be in the `bluetooth` group, and BlueZ must be running:
+```
+sudo usermod -a -G bluetooth $USER
+sudo systemctl enable --now bluetooth
+```
 
 ---
 
@@ -113,27 +154,29 @@ If you accidentally clicked "Don't Allow", go to:
 ### Step A — Test BLE alone (no camera)
 
 ```
-python3 ble_diagnostic.py
+python3 ble_diagnostic.py      # macOS/Linux
+python ble_diagnostic.py       # Windows
 ```
 
 You should see:
 ```
 [BLE] Background thread started.
-[BLE] Creating BlessServer 'VeloTracker'...
+[BLE] Creating BlessServer 'VeloTrack'...
 [BLE] Adding CSC service (0x1816)...
 [BLE] Adding FTMS service (0x1826)...
 [BLE] Starting advertising...
-[BLE] 'VeloTracker' is advertising.
-[BLE] Open MyWhoosh -> Device Connection -> Controllable -> pair with 'VeloTracker'.
+[BLE] 'VeloTrack' is advertising.
+[BLE] Open MyWhoosh -> Device Connection -> Controllable -> pair with 'VeloTrack'.
 ```
 
-Open MyWhoosh → Device Connection → tap **Controllable** → pair with "VeloTracker".
+Open MyWhoosh → Device Connection → tap **Controllable** → pair with "VeloTrack".
 You should see ~9.5 km/h, ~75 RPM, ~90 W.
 
 ### Step B — Full pipeline
 
 ```
-python3 main.py
+python3 main.py                # macOS/Linux
+python main.py                 # Windows
 ```
 
 Pedal for ~3 seconds (calibration). You should see `RPM: XX` in green.
@@ -146,16 +189,25 @@ In MyWhoosh, speed should respond to your pedaling.
 
 ### Step C — Pair with MyWhoosh
 1. Open MyWhoosh.
-2. Device Connection → tap **Controllable** → pair with "VeloTracker".
+2. Device Connection → tap **Controllable** → pair with "VeloTrack".
 3. Hit **Ride!**
 
 ---
 
 ## Troubleshooting
 
-### "Bluetooth permission denied"
+### "Bluetooth permission denied" (macOS)
 macOS blocked Python's access to Bluetooth. Go to:
 **System Settings → Privacy & Security → Bluetooth** → enable your Terminal/Python.
+
+### "No module named pysetupdi" (Windows)
+You need to install pysetupdi manually:
+```
+pip install git+https://github.com/gwangyi/pysetupdi
+```
+
+### "winrt-* package not found / build error" (Windows)
+You're probably using Python 3.13. **Use Python 3.11 or 3.12 instead** — bless's WinRT dependencies (`winrt-*==2.0.0b1`) don't have Python 3.13 wheels.
 
 ### "MyWhoosh detects VeloTracker but speed/power stay at 0"
 The camera isn't detecting the sticker. Run `python3 main.py` and check the dashboard.
@@ -165,8 +217,8 @@ Does "RPM: XX" show > 0 when pedaling?
 - Make sure the sticker is the only thing in frame that's that color.
 
 ### "Camera opens but shows black image"
-- IriunWebcam not running? Launch it on both Mac and iPhone.
-- iPhone and Mac on different Wi-Fi? Connect both to the same network.
+- IriunWebcam not running? Launch it on both computer and iPhone.
+- iPhone and computer on different Wi-Fi? Connect both to the same network.
 
 ### "Camera index 0 doesn't work"
 Try `python3 main.py --camera 1` or `--camera 2`.
@@ -178,9 +230,10 @@ Press `C` to recalibrate. Pedal steadily for ~3 seconds. Make sure:
 - Sticker is visible at all positions of the pedal stroke
 
 ### "BLE works but MyWhoosh doesn't see it"
-- Make sure MyWhoosh has Bluetooth permission too (System Settings → Privacy & Security → Bluetooth).
-- Toggle Bluetooth off and on in System Settings.
+- Make sure MyWhoosh has Bluetooth permission too.
+- Toggle Bluetooth off and on.
 - Restart MyWhoosh.
+- **Windows:** Make sure your Bluetooth adapter supports BLE peripheral mode.
 
 ---
 
@@ -197,11 +250,11 @@ VeloTracker/
   README.md              This file
   modules/
     __init__.py
-    camera.py            OpenCV camera wrapper (AVFoundation backend)
+    camera.py            OpenCV camera wrapper (platform-aware backend)
     detector.py          HSV color detection
     rpm_calculator.py    Kasa circle fit + OLS RPM regression
     dashboard.py         OpenCV HUD overlay
-    ble_server.py        bless + CoreBluetooth BLE GATT server
+    ble_server.py        bless BLE GATT server (cross-platform)
 ```
 
 ---

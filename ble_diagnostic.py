@@ -1,4 +1,4 @@
-"""VeloTracker - BLE diagnostic (macOS).
+"""VeloTracker - BLE diagnostic (cross-platform).
 
 Tests the BLE server alone (no camera). Simulates 75 RPM pedaling.
 
@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from modules.ble_server import BLECadenceServer
 
 print("=" * 60)
-print("  VeloTracker BLE Diagnostic (macOS)")
+print("  VeloTracker BLE Diagnostic")
 print("=" * 60)
 print()
 print("Simulating 75 RPM pedaling.")

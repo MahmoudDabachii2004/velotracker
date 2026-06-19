@@ -1,5 +1,5 @@
 """
-VeloTracker - BLE Server (macOS CoreBluetooth via bless)
+VeloTracker - BLE Server (cross-platform via bless)
 
 Simulates a CSC (Cycling Speed and Cadence) sensor + FTMS controllable trainer.
 
@@ -8,9 +8,14 @@ This avoids the "Characteristics with cached values must be read-only" error
 that occurs when using add_new_characteristic with an initial value on
 notify/write characteristics.
 
+Platform backends (handled automatically by bless):
+  - macOS:   CoreBluetooth
+  - Windows: WinRT (requires pywin32, winrt-* packages, pysetupdi)
+  - Linux:   BlueZ via D-Bus
+
 Tested on:
-  - macOS 12+ (Monterey, Ventura, Sonoma, Sequoia)
-  - Python 3.9 - 3.13
+  - macOS 12+ (Monterey, Ventura, Sonoma, Sequoia) — Python 3.9-3.13
+  - Windows 10+ — Python 3.11-3.12 (winrt-* 2.0.0b1 lacks 3.13 wheels)
   - bless 0.3+
 """
 
@@ -18,15 +23,10 @@ import asyncio
 import struct
 import time
 import threading
-from typing import Any, Optional, Dict
 import platform
+from typing import Any, Optional, Dict
 
 import config
-
-if platform.system() != "Darwin":
-    raise RuntimeError(
-        "This BLE server is macOS-only. Use ble_server.py on Windows."
-    )
 
 from bless import (
     BlessServer,
@@ -50,9 +50,12 @@ FTMS_INDOOR_BIKE_DATA_UUID = "00002ad2-0000-1000-8000-00805f9b34fb"
 FTMS_CONTROL_POINT_UUID = "00002ad9-0000-1000-8000-00805f9b34fb"
 FTMS_STATUS_UUID = "00002ada-0000-1000-8000-00805f9b34fb"
 
+# Current platform
+_PLATFORM = platform.system()  # "Darwin", "Windows", or "Linux"
+
 
 class BLECadenceServer:
-    """BLE server: CSC + FTMS, via bless (CoreBluetooth) on macOS."""
+    """BLE server: CSC + FTMS, via bless (cross-platform)."""
 
     def __init__(self):
         self._server: Optional[BlessServer] = None
@@ -198,11 +201,13 @@ class BLECadenceServer:
             await self._server.add_gatt(gatt_dict)
 
             print("[BLE] Starting advertising...")
-            # CRITICAL: prioritize_local_name=False tells bless to broadcast
-            # the service UUIDs in the advertisement, even though "VeloTracker"
-            # is 11 chars (over the 10-char limit that triggers UUID dropping).
-            # Without this, MyWhoosh can't find the device (it scans by FTMS UUID).
-            await self._server.start(prioritize_local_name=False)
+            # On macOS: prioritize_local_name=False tells bless to broadcast
+            # the service UUIDs in the advertisement (needed for MyWhoosh).
+            # On Windows/Linux: this kwarg is accepted via **kwargs but ignored.
+            if _PLATFORM == "Darwin":
+                await self._server.start(prioritize_local_name=False)
+            else:
+                await self._server.start()
             self._status = "Advertising"
             print(f"[BLE] '{config.BLE_DEVICE_NAME}' is advertising.")
             print(f"[BLE] Open MyWhoosh -> Device Connection -> Controllable -> pair with '{config.BLE_DEVICE_NAME}'.")
