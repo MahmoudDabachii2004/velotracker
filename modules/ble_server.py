@@ -28,6 +28,64 @@ from typing import Any, Optional, Dict
 
 import config
 
+# ============================================================================
+# Windows BLEAdapter Monkeypatch (Fixes MediaTek/Windows 11 CreateFile Error 2)
+# ============================================================================
+if platform.system() == "Windows":
+    try:
+        import bless.backends.winrt.ble.adapter as bless_adapter
+        import win32file
+        from win32con import GENERIC_WRITE, OPEN_EXISTING
+
+        orig_init = bless_adapter.BLEAdapter.__init__
+
+        def patched_init(self, *args, **kwargs):
+            # Try multiple GUIDs to find the correct Bluetooth radio state interface:
+            # 1. `{a5dcbf10-6530-11d2-901f-00c04fb951ed}` (Default bless GUID for USB)
+            # 2. `{92383b0e-f90e-4ac9-8d44-8c2d0d0ebda2}` (Bluetooth Radio State GUID, fixes MediaTek/Windows 11)
+            # 3. `{2f5812b3-6f6f-4bb6-ad79-ad4771f9c1e6}` (Alternative Bluetooth GUID)
+            guids = [
+                "{a5dcbf10-6530-11d2-901f-00c04fb951ed}",
+                "{92383b0e-f90e-4ac9-8d44-8c2d0d0ebda2}",
+                "{2f5812b3-6f6f-4bb6-ad79-ad4771f9c1e6}"
+            ]
+
+            get_adapter_func = getattr(bless_adapter, "get_bluetooth_adapter", None)
+            if get_adapter_func is None:
+                try:
+                    from pysetupdi import get_bluetooth_adapter as get_adapter_func
+                except ImportError:
+                    pass
+
+            if get_adapter_func is not None:
+                self._adapter_name = get_adapter_func()
+            else:
+                self._adapter_name = "get_bluetooth_adapter_not_found"
+
+            self._device_name = self._adapter_name.replace("\\", "#")
+
+            last_err = None
+            for guid in guids:
+                self._device_guid = guid
+                for prefix in ["\\\\.\\", "\\\\?\\"]:
+                    self._filename = prefix + self._device_name + "#" + self._device_guid
+                    try:
+                        self._dev = win32file.CreateFile(
+                            self._filename, GENERIC_WRITE, 0, None, OPEN_EXISTING, 0, None
+                        )
+                        if self._dev != -1:
+                            print(f"[BLE Patch] Connected to adapter using GUID {guid} and prefix {prefix}")
+                            return
+                    except Exception as e:
+                        last_err = e
+
+            raise last_err or Exception("Failed to open connection to the bluetooth adapter using any GUID/prefix")
+
+        bless_adapter.BLEAdapter.__init__ = patched_init
+        print("[BLE Patch] Applied Windows BLEAdapter monkeypatch successfully.")
+    except Exception as e:
+        print(f"[BLE Patch] Failed to apply Windows BLEAdapter monkeypatch: {e}")
+
 from bless import (
     BlessServer,
     BlessGATTCharacteristic,
