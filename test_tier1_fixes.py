@@ -312,6 +312,56 @@ class TestRequirementsPinned:
             f"bless should be version-pinned with upper bound or exact pin, got: {bless_line}"
         )
 
+    def test_no_bleak_upper_pin_on_windows(self):
+        """We previously tried 'bleak<1.0' on Windows, but bless 0.3.0 REQUIRES
+        bleak>=1.1.1, so bleak<1.0 is impossible. The conflict is inside bless itself.
+        requirements.txt should NOT pin bleak to <1.0 anywhere."""
+        req_text = Path("requirements.txt").read_text()
+        # The old broken line was: bleak>=0.22,<1.0; sys_platform == "win32"
+        assert "bleak>=0.22,<1.0" not in req_text, (
+            "bleak<1.0 pin was removed — bless 0.3.0 itself requires bleak>=1.1.1"
+        )
+
+    def test_python_311_required_documented_on_windows(self):
+        """Since bless 0.3.0 has an unsolvable conflict on Windows + Python 3.12+,
+        requirements.txt MUST document that Python 3.11 is required on Windows."""
+        req_text = Path("requirements.txt").read_text()
+        assert "Python 3.11" in req_text or "3.11" in req_text, (
+            "requirements.txt should document Python 3.11 requirement on Windows"
+        )
+        # The README should also document this
+        readme_text = Path("README.md").read_text()
+        assert "Python 3.11" in readme_text or "3.11" in readme_text, (
+            "README should document Python 3.11 requirement on Windows"
+        )
+
+
+# ============================================================================
+# Platform compatibility sanity check
+# ============================================================================
+
+class TestPlatformCompatibility:
+    """Verify the project's documented platform constraints are consistent."""
+
+    def test_windows_python_311_only(self):
+        """On Windows, only Python 3.11 is supported (due to bless 0.3.0 conflict).
+        If we're on Windows + Python 3.12+, fail loudly so the user knows to switch."""
+        import platform
+        import sys
+
+        if platform.system() == "Windows":
+            py_version = sys.version_info
+            if py_version >= (3, 12):
+                pytest.fail(
+                    f"VeloTracker does NOT support Python {py_version.major}.{py_version.minor} "
+                    f"on Windows. bless 0.3.0 has an internal dependency conflict "
+                    f"on Python 3.12+. Please install Python 3.11.9 from "
+                    f"https://www.python.org/downloads/release/python-3119/ and recreate "
+                    f"your venv with: py -3.11 -m venv .venv"
+                )
+            # On Windows + Python 3.11, we're good
+            assert py_version >= (3, 9), "Python 3.9+ required"
+
 
 # ============================================================================
 # BUG #18 — test_filters.py uses cross-platform path

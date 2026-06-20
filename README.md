@@ -45,7 +45,21 @@ MyWhoosh runs on the **same computer** — it pairs with the local BLE server.
 ### Windows
 - **Windows 10+** with a Bluetooth adapter that supports **BLE peripheral mode**
   (most built-in laptop Bluetooth works; some cheap USB dongles are central-only)
-- **Python 3.12.10** (Recommended) (Avoid Python 3.13 on Windows, as its BLE WinRT dependencies lack 3.13 wheels)
+- **Python 3.11.x** (REQUIRED on Windows — see note below)
+
+> ⚠️ **Windows + Python 3.12+ is NOT supported** due to an unsolvable dependency
+> conflict inside `bless 0.3.0` (the only stable bless release as of 2026-06):
+> - `bless 0.3.0` requires `bleak>=1.1.1`
+> - `bleak >= 1.0` requires `winrt-Windows.Devices.Bluetooth>=3.1`
+> - BUT `bless 0.3.0` also pins `winrt-Windows.Devices.Bluetooth==2.0.0b1` on Python 3.12+
+>
+> With **Python 3.11**, bless uses the legacy `bleak-winrt` path (no `winrt-*`
+> pinning), so everything installs cleanly.
+>
+> To install Python 3.11 on Windows:
+> - Download from https://www.python.org/downloads/release/python-3119/
+> - Or use `pyenv-win`: `pyenv install 3.11.9 && pyenv local 3.11.9`
+> - Then: `py -3.11 -m venv .venv && .venv\Scripts\activate`
 
 ### Linux
 - **BlueZ** 5.43+ with D-Bus
