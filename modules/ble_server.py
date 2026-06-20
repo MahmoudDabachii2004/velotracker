@@ -161,6 +161,18 @@ except ImportError:
     BlessAdvertisementData = None  # type: ignore
     _HAS_BLESS_ADVERTISEMENT_DATA = False
 
+# bless master (post-0.3.0, used via git pin) renamed
+# GATTAttributePermissions.writeable → writable (without the 'e').
+# Be compatible with both versions: prefer 'writable' (new), fall back to
+# 'writeable' (old 0.3.0 from PyPI).
+if hasattr(GATTAttributePermissions, "writable"):
+    _PERM_WRITE = GATTAttributePermissions.writable
+elif hasattr(GATTAttributePermissions, "writeable"):
+    _PERM_WRITE = GATTAttributePermissions.writeable
+else:
+    # Should never happen, but fall back to a sensible default (readable+writeable)
+    _PERM_WRITE = GATTAttributePermissions.readable | GATTAttributePermissions.writeable  # type: ignore
+
 # ============================================================================
 # GATT UUIDs
 # ============================================================================
@@ -424,7 +436,7 @@ class BLECadenceServer:
                         GATTCharacteristicProperties.write
                         | GATTCharacteristicProperties.indicate
                     ),
-                    "Permissions": GATTAttributePermissions.writeable,
+                    "Permissions": _PERM_WRITE,
                     "Value": None,
                 },
                 # Status: Read + Notify -> Value must be None

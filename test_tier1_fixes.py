@@ -392,6 +392,27 @@ class TestPlatformCompatibility:
                 f"Got ImportError: {e}. Check requirements.txt for the bless pin."
             )
 
+    def test_bless_writable_permission_compatible(self):
+        """bless master renamed GATTAttributePermissions.writeable → writable
+        (without the 'e'). Our code must be compatible with both versions
+        (so users can run either bless 0.3.0 from PyPI or bless master from git).
+        Verify that our _PERM_WRITE helper resolves to a valid permission."""
+        from bless import GATTAttributePermissions
+        # Import the _PERM_WRITE helper from ble_server
+        from modules.ble_server import _PERM_WRITE
+        # It should be one of the writable permissions from bless
+        assert _PERM_WRITE is not None
+        # Verify it's a valid value from GATTAttributePermissions (not random)
+        valid_writable_perms = [
+            getattr(GATTAttributePermissions, name)
+            for name in ["writable", "writeable"]
+            if hasattr(GATTAttributePermissions, name)
+        ]
+        assert _PERM_WRITE in valid_writable_perms, (
+            f"_PERM_WRITE should be a valid writable permission, got {_PERM_WRITE}. "
+            f"Valid options: {valid_writable_perms}"
+        )
+
 
 # ============================================================================
 # BUG #18 — test_filters.py uses cross-platform path
