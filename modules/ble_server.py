@@ -147,6 +147,20 @@ from bless import (
     GATTAttributePermissions,
 )
 
+# BlessAdvertisementData was added in bless master (post-0.3.0, PR #159).
+# It allows passing a single advertising payload instead of letting each
+# GATT service advertise independently (which caused macOS clients to see
+# 3 phantom devices when Windows hosts).
+#
+# Try to import it; if running on older bless (0.3.0 from PyPI), fall back
+# to the legacy per-service advertising path.
+try:
+    from bless.backends.advertisement import BlessAdvertisementData
+    _HAS_BLESS_ADVERTISEMENT_DATA = True
+except ImportError:
+    BlessAdvertisementData = None  # type: ignore
+    _HAS_BLESS_ADVERTISEMENT_DATA = False
+
 # ============================================================================
 # GATT UUIDs
 # ============================================================================
@@ -443,25 +457,58 @@ class BLECadenceServer:
             await self._server.add_gatt(gatt_dict)
 
             print("[BLE] Starting advertising...")
-            # On macOS: prioritize_local_name=True puts the device name in the
-            # primary advertisement (not the Scan Response). This is what real
-            # smart trainers do — and it's required for MyWhoosh to display the
-            # user-defined name ("Velo") instead of the macOS fallback
-            # "device-XXXX" name when the Scan Response hasn't been received yet.
+            # Build a BlessAdvertisementData payload so we have a SINGLE
+            # advertisement containing the device name + all service UUIDs,
+            # instead of letting each GATT service advertise independently.
             #
-            # The previous setting (False) was causing MyWhoosh on macOS to
-            # display "device-XXXX" because the name was only in the Scan
-            # Response, which may not be received on the first scan cycle.
+            # Background: bless 0.3.0 (and earlier) called
+            #   service_provider.start_advertising() once PER GATT service,
+            #   which on Windows WinRT caused macOS clients to see N phantom
+            #   devices (one per service) instead of 1 unified device.
             #
-            # Trade-off: with prioritize_local_name=True, the 3 service UUIDs
-            # (FTMS + CPS + CSC = 6 bytes) are moved to the Scan Response.
-            # This is fine because MyWhoosh reads the Scan Response anyway.
+            # The new BlessAdvertisementData API (PR #159, merged 2025)
+            # lets us pass a single advertising payload.
             #
-            # On Windows/Linux: this kwarg is accepted via **kwargs but ignored.
+            # Note on platform behavior (per BlessAdvertisementData.__post_init__):
+            #   - macOS: local_name + service_uuids are NOT used by the new API
+            #     (CoreBluetooth uses BlessServer.name + prioritize_local_name kwarg)
+            #   - Windows: local_name is used via _adapter.set_local_name()
+            #   - Linux: all fields are used
+            #
+            # So we still pass prioritize_local_name=True on macOS for the name,
+            # AND we pass advertisement_data for the Windows/Linux paths.
+            adv_data = None
+            if _HAS_BLESS_ADVERTISEMENT_DATA:
+                # The 3 service UUIDs we advertise (so clients can discover us
+                # as a smart trainer via FTMS, plus as a power meter via CPS,
+                # plus as a cadence sensor via CSC).
+                service_uuids_16bit = [
+                    "00001826-0000-1000-8000-00805f9b34fb",  # FTMS (0x1826)
+                    "00001818-0000-1000-8000-00805f9b34fb",  # CPS  (0x1818)
+                    "00001816-0000-1000-8000-00805f9b34fb",  # CSC  (0x1816)
+                ]
+                adv_data = BlessAdvertisementData(
+                    local_name=config.BLE_DEVICE_NAME,
+                    service_uuids=service_uuids_16bit,
+                    is_connectable=True,
+                    is_discoverable=True,
+                )
+
             if _PLATFORM == "Darwin":
-                await self._server.start(prioritize_local_name=True)
+                # macOS: prioritize_local_name=True puts the device name in
+                # the primary advertisement (required for MyWhoosh to show
+                # "Velo" instead of "device-XXXX" before Scan Response arrives).
+                # advertisement_data is also passed but on macOS the local_name
+                # and service_uuids fields are ignored (the kwarg controls it).
+                await self._server.start(
+                    advertisement_data=adv_data,
+                    prioritize_local_name=True,
+                )
             else:
-                await self._server.start()
+                # Windows + Linux: advertisement_data is the primary control.
+                # On Windows, local_name propagates via _adapter.set_local_name().
+                # On Linux, all fields are used by the BlueZ backend.
+                await self._server.start(advertisement_data=adv_data)
             self._status = "Advertising"
             print(f"[BLE] '{config.BLE_DEVICE_NAME}' is advertising.")
             print(f"[BLE] Open MyWhoosh -> Device Connection -> Controllable -> pair with '{config.BLE_DEVICE_NAME}'.")

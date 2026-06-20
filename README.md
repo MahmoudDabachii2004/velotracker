@@ -45,21 +45,21 @@ MyWhoosh runs on the **same computer** — it pairs with the local BLE server.
 ### Windows
 - **Windows 10+** with a Bluetooth adapter that supports **BLE peripheral mode**
   (most built-in laptop Bluetooth works; some cheap USB dongles are central-only)
-- **Python 3.11.x** (REQUIRED on Windows — see note below)
+- **Python 3.11 or 3.12** (see note below)
 
-> ⚠️ **Windows + Python 3.12+ is NOT supported** due to an unsolvable dependency
-> conflict inside `bless 0.3.0` (the only stable bless release as of 2026-06):
-> - `bless 0.3.0` requires `bleak>=1.1.1`
-> - `bleak >= 1.0` requires `winrt-Windows.Devices.Bluetooth>=3.1`
-> - BUT `bless 0.3.0` also pins `winrt-Windows.Devices.Bluetooth==2.0.0b1` on Python 3.12+
+> ℹ️ **About Python versions on Windows:**
+> VeloTracker uses `bless` for BLE peripheral mode. The latest PyPI release
+> (bless 0.3.0) has an internal dependency conflict on Python 3.12+ that we
+> work around by **pinning bless to a specific git master commit** (a27e1c25,
+> April 2026) which fixes the conflict. This means:
 >
-> With **Python 3.11**, bless uses the legacy `bleak-winrt` path (no `winrt-*`
-> pinning), so everything installs cleanly.
+> - ✅ Python 3.11 works (legacy path, stable)
+> - ✅ Python 3.12 works (thanks to bless master pin)
+> - ❌ Python 3.13+ not yet tested with bless master (may work, no guarantee)
 >
-> To install Python 3.11 on Windows:
-> - Download from https://www.python.org/downloads/release/python-3119/
-> - Or use `pyenv-win`: `pyenv install 3.11.9 && pyenv local 3.11.9`
-> - Then: `py -3.11 -m venv .venv && .venv\Scripts\activate`
+> When bless 0.3.1 or 0.4.0 is released to PyPI with the fix, we'll switch
+> back to a standard PyPI version pin. Track upstream:
+> https://github.com/kevincar/bless/releases
 
 ### Linux
 - **BlueZ** 5.43+ with D-Bus

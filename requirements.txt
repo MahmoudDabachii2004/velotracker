@@ -31,13 +31,23 @@
 opencv-python>=4.8
 numpy>=1.24
 
-# bless is pinned to 0.3.x because modules/ble_server.py relies on internals
-# (BLEAdapter.__init__ on Windows, BlessServerWinRT.start) that may break on
-# a major version bump. Update the monkeypatches before upgrading bless.
+# bless is pinned to a specific git master commit (a27e1c25, 2026-04-11) because:
+#   1. The latest PyPI release (0.3.0, Dec 2025) has an unsolvable dependency
+#      conflict on Windows + Python 3.12+ (pins winrt-Windows.*==2.0.0b1 but
+#      also requires bleak>=1.1.1 which needs winrt-*>=3.1).
+#   2. The fix (commit a27e1c25 'Update winrt-Windows dependencies to match
+#      those with bleak') is merged into bless master but NOT yet released
+#      to PyPI as of 2026-06-20.
+#   3. master also includes the new BlessAdvertisementData API (PR #159)
+#      which lets us pass a single advertising payload instead of letting
+#      each GATT service advertise independently (fixing the '2 phantom
+#      devices' issue on macOS clients when Windows hosts).
 #
-# On Windows + Python 3.12+, bless 0.3.0 has an unsolvable dependency conflict
-# (see note above). Use Python 3.11 on Windows.
-bless>=0.3.0,<0.4.0
+# When bless 0.3.1 or 0.4.0 is released to PyPI, switch back to a PyPI pin:
+#   bless>=0.3.1,<0.4.0
+#
+# Track upstream releases: https://github.com/kevincar/bless/releases
+bless @ git+https://github.com/kevincar/bless.git@a27e1c25
 
 # === Windows-only (auto-installed by bless on Windows) ===
 # pywin32                     — installed automatically

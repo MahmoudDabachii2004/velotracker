@@ -298,18 +298,22 @@ class TestCalculatePowerIsStatic:
 # ============================================================================
 
 class TestRequirementsPinned:
-    """requirements.txt should pin bless to a specific major version range."""
+    """requirements.txt should pin bless to a specific version (PyPI or git commit)."""
 
     def test_bless_version_pinned(self):
         req_text = Path("requirements.txt").read_text(encoding="utf-8")
-        # Should contain a bless line with both lower and upper bounds
-        # e.g. "bless>=0.3.0,<0.4.0" or "bless==0.3.0"
+        # Should contain a bless line that's either:
+        #   - PyPI version pin with upper bound: "bless>=0.3.0,<0.4.0"
+        #   - PyPI exact pin: "bless==0.3.0"
+        #   - Git commit pin (for pre-release fixes): "bless @ git+...@<sha>"
         bless_lines = [l for l in req_text.splitlines() if l.strip().startswith("bless")]
         assert len(bless_lines) >= 1, "bless should be in requirements.txt"
         bless_line = bless_lines[0]
-        # Should have either an upper bound (<) or exact pin (==)
-        assert ("<" in bless_line) or ("==" in bless_line), (
-            f"bless should be version-pinned with upper bound or exact pin, got: {bless_line}"
+        is_pypi_pin = ("<" in bless_line) or ("==" in bless_line)
+        is_git_pin = "git+" in bless_line and "@" in bless_line
+        assert is_pypi_pin or is_git_pin, (
+            f"bless should be version-pinned (PyPI <, PyPI ==, or git @ commit). "
+            f"Got: {bless_line}"
         )
 
     def test_no_bleak_upper_pin_on_windows(self):
@@ -322,18 +326,26 @@ class TestRequirementsPinned:
             "bleak<1.0 pin was removed — bless 0.3.0 itself requires bleak>=1.1.1"
         )
 
-    def test_python_311_required_documented_on_windows(self):
-        """Since bless 0.3.0 has an unsolvable conflict on Windows + Python 3.12+,
-        requirements.txt MUST document that Python 3.11 is required on Windows."""
+    def test_bless_git_pin_or_pypi_pin(self):
+        """bless should be pinned to either a PyPI version range OR a specific
+        git commit (the latter is used to access fixes not yet on PyPI, like
+        the winrt dependency conflict fix from April 2026)."""
         req_text = Path("requirements.txt").read_text(encoding="utf-8")
-        assert "Python 3.11" in req_text or "3.11" in req_text, (
-            "requirements.txt should document Python 3.11 requirement on Windows"
-        )
-        # The README should also document this
-        readme_text = Path("README.md").read_text(encoding="utf-8")
-        assert "Python 3.11" in readme_text or "3.11" in readme_text, (
-            "README should document Python 3.11 requirement on Windows"
-        )
+        bless_lines = [l for l in req_text.splitlines() if l.strip().startswith("bless")]
+        assert len(bless_lines) >= 1, "bless should be in requirements.txt"
+        bless_line = bless_lines[0].strip()
+        # Acceptable forms:
+        #   bless>=0.3.0,<0.4.0          (PyPI range pin)
+        #   bless==0.3.0                  (PyPI exact pin)
+        #   bless @ git+https://...@sha   (git commit pin)
+        if "git+" in bless_line:
+            assert "@" in bless_line, (
+                f"git pin should include @commit-sha, got: {bless_line}"
+            )
+        else:
+            assert ("<" in bless_line) or ("==" in bless_line), (
+                f"PyPI pin should have < or ==, got: {bless_line}"
+            )
 
 
 # ============================================================================
@@ -343,24 +355,42 @@ class TestRequirementsPinned:
 class TestPlatformCompatibility:
     """Verify the project's documented platform constraints are consistent."""
 
-    def test_windows_python_311_only(self):
-        """On Windows, only Python 3.11 is supported (due to bless 0.3.0 conflict).
-        If we're on Windows + Python 3.12+, fail loudly so the user knows to switch."""
+    def test_windows_python_versions_supported(self):
+        """On Windows, Python 3.11 and 3.12 are supported. Python 3.13+ is
+        not yet tested (may work, no guarantee) — but we no longer FAIL the
+        test on 3.12+ since the bless git pin fixes the dependency conflict."""
         import platform
         import sys
 
         if platform.system() == "Windows":
             py_version = sys.version_info
-            if py_version >= (3, 12):
-                pytest.fail(
-                    f"VeloTracker does NOT support Python {py_version.major}.{py_version.minor} "
-                    f"on Windows. bless 0.3.0 has an internal dependency conflict "
-                    f"on Python 3.12+. Please install Python 3.11.9 from "
-                    f"https://www.python.org/downloads/release/python-3119/ and recreate "
-                    f"your venv with: py -3.11 -m venv .venv"
+            # 3.11 and 3.12 are officially supported
+            if py_version >= (3, 13):
+                # We don't fail the test on 3.13+, just print a warning
+                # (the user can still try it — bless master might work)
+                import warnings
+                warnings.warn(
+                    f"Python {py_version.major}.{py_version.minor} on Windows is "
+                    f"not officially tested with bless master. Python 3.11 or 3.12 "
+                    f"is recommended. Proceed at your own risk.",
+                    UserWarning,
                 )
-            # On Windows + Python 3.11, we're good
+            # Minimum supported version is 3.9
             assert py_version >= (3, 9), "Python 3.9+ required"
+
+    def test_bless_advertisement_data_available(self):
+        """The bless git pin (commit a27e1c25) includes BlessAdvertisementData
+        (PR #159) which we use for unified advertising across platforms.
+        Verify it's importable."""
+        try:
+            from bless.backends.advertisement import BlessAdvertisementData
+            adv = BlessAdvertisementData(local_name="test", service_uuids=[])
+            assert adv.local_name == "test"
+        except ImportError as e:
+            pytest.fail(
+                f"BlessAdvertisementData should be available with bless git pin. "
+                f"Got ImportError: {e}. Check requirements.txt for the bless pin."
+            )
 
 
 # ============================================================================
