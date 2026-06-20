@@ -45,21 +45,26 @@ MyWhoosh runs on the **same computer** — it pairs with the local BLE server.
 ### Windows
 - **Windows 10+** with a Bluetooth adapter that supports **BLE peripheral mode**
   (most built-in laptop Bluetooth works; some cheap USB dongles are central-only)
-- **Python 3.11 or 3.12** (see note below)
+- **Python 3.11.x** (REQUIRED on Windows — see note below)
 
-> ℹ️ **About Python versions on Windows:**
-> VeloTracker uses `bless` for BLE peripheral mode. The latest PyPI release
-> (bless 0.3.0) has an internal dependency conflict on Python 3.12+ that we
-> work around by **pinning bless to a specific git master commit** (a27e1c25,
-> April 2026) which fixes the conflict. This means:
+> ⚠️ **Windows + Python 3.12+ is NOT supported** due to an unsolvable dependency
+> conflict inside `bless 0.3.0` (the only stable bless release as of 2026-06):
+> - `bless 0.3.0` requires `bleak>=1.1.1`
+> - `bleak >= 1.0` requires `winrt-Windows.Devices.Bluetooth>=3.1`
+> - BUT `bless 0.3.0` also pins `winrt-Windows.Devices.Bluetooth==2.0.0b1` on Python 3.12+
 >
-> - ✅ Python 3.11 works (legacy path, stable)
-> - ✅ Python 3.12 works (thanks to bless master pin)
-> - ❌ Python 3.13+ not yet tested with bless master (may work, no guarantee)
+> We tried pinning to bless git master (commit a27e1c25, Apr 2026) which fixes
+> the winrt conflict, but it introduces OTHER breaking API changes (callback
+> signatures, BlessAdvertisementData behavior, registry writes requiring admin)
+> that we couldn't work around cleanly. Reverted to stable bless 0.3.0 + Python 3.11.
 >
-> When bless 0.3.1 or 0.4.0 is released to PyPI with the fix, we'll switch
-> back to a standard PyPI version pin. Track upstream:
-> https://github.com/kevincar/bless/releases
+> With **Python 3.11**, bless uses the legacy `bleak-winrt` path (no `winrt-*`
+> pinning), so everything installs cleanly.
+>
+> To install Python 3.11 on Windows:
+> - Download from https://www.python.org/downloads/release/python-3119/
+> - Or use `pyenv-win`: `pyenv install 3.11.9 && pyenv local 3.11.9`
+> - Then: `py -3.11 -m venv .venv && .venv\Scripts\activate`
 
 ### Linux
 - **BlueZ** 5.43+ with D-Bus
@@ -230,23 +235,23 @@ In MyWhoosh, speed should respond to your pedaling.
 
 ### Step C — Pair with MyWhoosh
 1. Open MyWhoosh.
-2. Device Connection → tap **Controllable** → pair with "VeloTrack".
+2. Device Connection → tap **Controllable** → pair with "V".
 3. Hit **Ride!**
 
 ---
 
 ## Known Issues
 
-### "Velo-1765" suffix on macOS client (when Mac hosts)
-**Symptom:** MyWhoosh on Windows (or other client) sees the device as `Velo-1765` or `Velo-XXXX` with a random 4-digit suffix that changes on every restart.
+### "V-1765" suffix on macOS client (when Mac hosts)
+**Symptom:** MyWhoosh on Windows (or other client) sees the device as `V-1765` or `V-XXXX` with a random 4-digit suffix that changes on every restart.
 
-**Cause:** macOS CoreBluetooth automatically appends a disambiguation suffix when it detects a name collision with a previously-cached device. Since VeloTracker doesn't persist a stable Bluetooth identity across restarts, macOS treats each restart as a "new" device named "Velo" and adds a suffix to distinguish it from the cached one.
+**Cause:** macOS CoreBluetooth automatically appends a disambiguation suffix when it detects a name collision with a previously-cached device. Since VeloTracker doesn't persist a stable Bluetooth identity across restarts, macOS treats each restart as a "new" device named "V" and adds a suffix to distinguish it from the cached one.
 
 **Fix (one-time, per client device):**
 1. On the client machine (the one running MyWhoosh), open Bluetooth settings
-2. Find the previously-paired "Velo" entry → Remove / Forget device
+2. Find the previously-paired "V" entry → Remove / Forget device
 3. Restart MyWhoosh
-4. Re-scan and pair — the device should now show as just "Velo" without suffix
+4. Re-scan and pair — the device should now show as just "V" without suffix
 
 **Fix (permanent, on macOS host):** You can also clear the CoreBluetooth cache by running this on the Mac host between sessions:
 ```bash
@@ -256,7 +261,7 @@ sudo killall bluetoothd
 (⚠️ This will forget ALL your Bluetooth devices — keyboard, mouse, etc. Only do this if you understand the impact.)
 
 ### "Device-XXXXXX" appears on macOS client when Windows hosts
-**Symptom:** When running VeloTracker on Windows as host, MyWhoosh on macOS shows 2 generic devices named `Device-E264F830` and `Device-37D07B56` (the hex suffix = part of the Bluetooth MAC address, changes on every restart). The custom name "Velo" doesn't appear at all. Only one of the two devices actually works.
+**Symptom:** When running VeloTracker on Windows as host, MyWhoosh on macOS shows 2 generic devices named `Device-E264F830` and `Device-37D07B56` (the hex suffix = part of the Bluetooth MAC address, changes on every restart). The custom name "V" doesn't appear at all. Only one of the two devices actually works.
 
 **Cause:** This is a known limitation of `bless 0.3.0` on Windows WinRT:
 - The `prioritize_local_name` parameter (used on macOS to control where the device name appears in the advertisement) is accepted via `**kwargs` on Windows but **silently ignored**.
@@ -264,32 +269,12 @@ sudo killall bluetoothd
 - The "2 devices" you see are: (1) the primary advertisement, and (2) the Scan Response, which macOS interprets as separate devices when their names don't match.
 
 **Workarounds:**
-1. **Use macOS as host when possible.** The macOS CoreBluetooth backend correctly exposes the custom device name, so you'll see "Velo" on all clients.
+1. **Use macOS as host when possible.** The macOS CoreBluetooth backend correctly exposes the custom device name, so you'll see "V" on all clients.
 2. **Pair by service UUID, not by name.** In MyWhoosh, when you see the 2 "Device-XXXXXX" entries, try each one — only one will actually respond to FTMS pairing. Once paired, MyWhoosh will remember it.
 3. **Wait for bless 0.4.0+.** The maintainers are aware of the WinRT device name issue. Once a new bless version is released with the fix, this problem should disappear.
 
-### Device name "Velo" only shows when running as Administrator (Windows host)
-**Symptom:** On Windows host, when you run `python ble_diagnostic.py` as a normal user, you get:
-```
-[BLE] ERROR: [WinError 5] Access is denied
-```
-When you run it as Administrator, it works and MyWhoosh sees "Velo".
-
-**Cause:** When `BlessAdvertisementData(local_name="Velo")` is passed on Windows, bless internally calls `_adapter.set_local_name()` which writes to the Windows Registry (HKLM) to rename the Bluetooth adapter system-wide. HKLM writes require Administrator privileges.
-
-**Fix (recommended):** Run your terminal as Administrator when using VeloTracker on Windows:
-- Right-click PowerShell/Terminal → "Run as administrator"
-- Or run via an elevated shortcut
-
-**Automatic fallback:** VeloTracker now tries with `local_name` first, and if it gets `PermissionError`, automatically retries without `local_name`. The server will still start, but the device name will be the system adapter name (e.g. "Device-XXXXXX") instead of "Velo". You'll see this warning:
-```
-[BLE] WARNING: PermissionError when setting device name (requires Administrator).
-[BLE]   The device will use the system adapter name (e.g. 'Device-XXXXXX') instead of 'Velo'.
-[BLE]   To fix: run Terminal/PowerShell as Administrator.
-```
-
 ### macOS host shows different name on different clients
-**Symptom:** macOS host exposes "Velo" correctly, but Windows client sees a different name (or no name) for the same device.
+**Symptom:** macOS host exposes "V" correctly, but Windows client sees a different name (or no name) for the same device.
 
 **Cause:** Different BLE stacks interpret the advertising payload slightly differently. macOS CoreBluetooth puts the Local Name in the primary advertisement, but Windows WinRT may need to receive the Scan Response to see the full name. Until the Scan Response is processed, Windows may show a fallback name.
 

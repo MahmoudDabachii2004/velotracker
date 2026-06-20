@@ -147,31 +147,17 @@ from bless import (
     GATTAttributePermissions,
 )
 
-# BlessAdvertisementData was added in bless master (post-0.3.0, PR #159).
-# It allows passing a single advertising payload instead of letting each
-# GATT service advertise independently (which caused macOS clients to see
-# 3 phantom devices when Windows hosts).
+# NOTE: We use bless 0.3.0 from PyPI (stable). We tried git master (commit
+# a27e1c25, Apr 2026) which adds BlessAdvertisementData (PR #159) and fixes
+# the winrt-Windows.* dependency conflict on Python 3.12+, but it also
+# introduces breaking API changes:
+#   1. GATTAttributePermissions.writeable → writable (renamed)
+#   2. _read_request/_write_request signatures changed (now take a request arg)
+#   3. _subscribed_clients keys are now str(uuid) instead of int → KeyError
+#   4. BlessAdvertisementData.local_name triggers HKLM registry write (admin only)
 #
-# Try to import it; if running on older bless (0.3.0 from PyPI), fall back
-# to the legacy per-service advertising path.
-try:
-    from bless.backends.advertisement import BlessAdvertisementData
-    _HAS_BLESS_ADVERTISEMENT_DATA = True
-except ImportError:
-    BlessAdvertisementData = None  # type: ignore
-    _HAS_BLESS_ADVERTISEMENT_DATA = False
-
-# bless master (post-0.3.0, used via git pin) renamed
-# GATTAttributePermissions.writeable → writable (without the 'e').
-# Be compatible with both versions: prefer 'writable' (new), fall back to
-# 'writeable' (old 0.3.0 from PyPI).
-if hasattr(GATTAttributePermissions, "writable"):
-    _PERM_WRITE = GATTAttributePermissions.writable
-elif hasattr(GATTAttributePermissions, "writeable"):
-    _PERM_WRITE = GATTAttributePermissions.writeable
-else:
-    # Should never happen, but fall back to a sensible default (readable+writeable)
-    _PERM_WRITE = GATTAttributePermissions.readable | GATTAttributePermissions.writeable  # type: ignore
+# The cumulative effect was worse than the original problem. Reverted to
+# stable bless 0.3.0 + Python 3.11 on Windows.
 
 # ============================================================================
 # GATT UUIDs
@@ -436,7 +422,7 @@ class BLECadenceServer:
                         GATTCharacteristicProperties.write
                         | GATTCharacteristicProperties.indicate
                     ),
-                    "Permissions": _PERM_WRITE,
+                    "Permissions": GATTAttributePermissions.writeable,
                     "Value": None,
                 },
                 # Status: Read + Notify -> Value must be None
@@ -469,103 +455,17 @@ class BLECadenceServer:
             await self._server.add_gatt(gatt_dict)
 
             print("[BLE] Starting advertising...")
-            # Build a BlessAdvertisementData payload so we have a SINGLE
-            # advertisement containing the device name + all service UUIDs,
-            # instead of letting each GATT service advertise independently.
+            # On macOS: prioritize_local_name=False tells bless to broadcast
+            # the service UUIDs in the advertisement (needed for MyWhoosh).
+            # On Windows/Linux: this kwarg is accepted via **kwargs but ignored.
             #
-            # Background: bless 0.3.0 (and earlier) called
-            #   service_provider.start_advertising() once PER GATT service,
-            #   which on Windows WinRT caused macOS clients to see N phantom
-            #   devices (one per service) instead of 1 unified device.
-            #
-            # The new BlessAdvertisementData API (PR #159, merged 2025)
-            # lets us pass a single advertising payload.
-            #
-            # PLATFORM-SPECIFIC BEHAVIOR (per BlessAdvertisementData.__post_init__):
-            #
-            #   macOS (Darwin):
-            #     - local_name + service_uuids NOT used by advertisement_data
-            #       (CoreBluetooth uses BlessServer.name + prioritize_local_name kwarg)
-            #     - We still pass them for documentation; they're ignored.
-            #
-            #   Windows (WinRT):
-            #     - local_name IS used → triggers a Windows Registry write (HKLM)
-            #       to rename the Bluetooth adapter system-wide. REQUIRES ADMIN.
-            #     - If run as a normal user → PermissionError [WinError 5].
-            #     - Our strategy: try WITH local_name first (so admin users get
-            #       "Velo" as device name), and fall back WITHOUT local_name
-            #       (system adapter name) if PermissionError.
-            #     - service_uuids NOT used (per warning).
-            #     - is_connectable + is_discoverable ARE used.
-            #
-            #   Linux (BlueZ):
-            #     - All fields used (local_name, service_uuids, etc.)
-            #     - is_connectable + is_discoverable NOT used (per warning).
-            adv_data = None
-            if _HAS_BLESS_ADVERTISEMENT_DATA:
-                # The 3 service UUIDs we advertise (so clients can discover us
-                # as a smart trainer via FTMS, plus as a power meter via CPS,
-                # plus as a cadence sensor via CSC).
-                service_uuids_16bit = [
-                    "00001826-0000-1000-8000-00805f9b34fb",  # FTMS (0x1826)
-                    "00001818-0000-1000-8000-00805f9b34fb",  # CPS  (0x1818)
-                    "00001816-0000-1000-8000-00805f9b34fb",  # CSC  (0x1816)
-                ]
-
-                if _PLATFORM == "Windows":
-                    # On Windows: BlessAdvertisementData.local_name triggers a
-                    # HKLM registry write that requires Administrator privileges.
-                    # We try WITH local_name first (best case: "Velo" works),
-                    # then fall back to WITHOUT local_name if PermissionError
-                    # (worse case: device name is the system adapter name).
-                    # We pre-build both variants to avoid race conditions.
-                    adv_data_with_name = BlessAdvertisementData(
-                        local_name=config.BLE_DEVICE_NAME,
-                        is_connectable=True,
-                        is_discoverable=True,
-                    )
-                    adv_data_without_name = BlessAdvertisementData(
-                        is_connectable=True,
-                        is_discoverable=True,
-                    )
-                    # Will retry below
-                    adv_data = adv_data_with_name
-                else:
-                    # macOS + Linux: pass all fields (local_name + service_uuids).
-                    # On macOS they're ignored, on Linux they're used.
-                    adv_data = BlessAdvertisementData(
-                        local_name=config.BLE_DEVICE_NAME,
-                        service_uuids=service_uuids_16bit,
-                        is_connectable=True,
-                        is_discoverable=True,
-                    )
-
-            # Try to start advertising. On Windows, the first attempt may fail
-            # with PermissionError if not running as Administrator (because
-            # local_name triggers a HKLM registry write). In that case, retry
-            # WITHOUT local_name so the server can still start (device name
-            # will fall back to the system adapter name).
-            try:
-                if _PLATFORM == "Darwin":
-                    await self._server.start(
-                        advertisement_data=adv_data,
-                        prioritize_local_name=True,
-                    )
-                else:
-                    await self._server.start(advertisement_data=adv_data)
-            except PermissionError as e:
-                if _PLATFORM == "Windows" and _HAS_BLESS_ADVERTISEMENT_DATA:
-                    print(f"[BLE] WARNING: PermissionError when setting device name "
-                          f"(requires Administrator). Retrying without local_name...")
-                    print(f"[BLE]   Error: {e}")
-                    print(f"[BLE]   The device will use the system adapter name "
-                          f"(e.g. 'Device-XXXXXX') instead of '{config.BLE_DEVICE_NAME}'.")
-                    print(f"[BLE]   To fix: run Terminal/PowerShell as Administrator.")
-                    adv_data = adv_data_without_name  # type: ignore
-                    await self._server.start(advertisement_data=adv_data)
-                else:
-                    # On macOS/Linux, PermissionError shouldn't happen — re-raise
-                    raise
+            # On Windows, the device name shown to clients is the system adapter
+            # name (e.g. 'Device-XXXXXX') — this is a fundamental WinRT
+            # limitation, not a bless bug. See 'Known Issues' in README.md.
+            if _PLATFORM == "Darwin":
+                await self._server.start(prioritize_local_name=False)
+            else:
+                await self._server.start()
             self._status = "Advertising"
             print(f"[BLE] '{config.BLE_DEVICE_NAME}' is advertising.")
             print(f"[BLE] Open MyWhoosh -> Device Connection -> Controllable -> pair with '{config.BLE_DEVICE_NAME}'.")

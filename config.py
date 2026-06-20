@@ -54,18 +54,15 @@ RPM_WEIGHTED_OLS_LAMBDA = 2.0 # Exponential decay factor for weighted least-squa
 # ============================================================================
 # BLE (via bless — CoreBluetooth on macOS, WinRT on Windows, BlueZ on Linux)
 # ============================================================================
-# BLE advertising payload is limited to ~28 usable bytes on macOS CoreBluetooth
-# (similar on Windows WinRT). With 3 service UUIDs (FTMS + CPS + CSC = 6 bytes)
-# + Flags AD (3 bytes) + Local Name header (2 bytes), a 4-char name fits
-# comfortably on all platforms.
+# IMPORTANT: Keep the name <=10 chars. macOS BLE advertisements are limited
+# to 28 bytes. If the name is >10 chars, bless may drop the service UUIDs
+# from the advertisement, so apps like MyWhoosh can't find the device.
 #
-# NOTE on naming: bless/WinRT may silently truncate names longer than ~8 chars
-# in the primary advertisement when multiple service UUIDs are present. To keep
-# the device identifiable across all platforms, we default to "Velo" (4 chars).
-#
-# macOS users who want a more descriptive name can change this to "VeloTracker"
-# (11 chars) — macOS CoreBluetooth handles the full 28-byte budget correctly.
-BLE_DEVICE_NAME = "Velo"
+# On Windows, the device name shown in MyWhoosh will fall back to the
+# system adapter name (e.g. 'Device-XXXXXX') regardless of this setting —
+# this is a fundamental WinRT limitation, not a bless bug. See 'Known Issues'
+# in README.md for details.
+BLE_DEVICE_NAME = "V"  # 1 char - absolute minimum advertising payload size
 BLE_NOTIFY_INTERVAL_SEC = 0.5  # 2Hz heartbeat (PeloMon-proven value)
 
 # ============================================================================

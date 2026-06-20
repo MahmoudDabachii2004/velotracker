@@ -80,15 +80,21 @@ class TestDrivetrainConfig:
 # ============================================================================
 
 class TestBLEDeviceName:
-    """The device name should be short enough to fit all platforms'
-    advertising payload (was 'V' — too cryptic; 'VeloTracker' was too long
-    for Windows WinRT which truncated it to 'VeloTrac')."""
+    """The device name should be short enough to fit the macOS advertising
+    payload budget (was 'VeloTracker' — too long for some stacks).
+    Now using 'V' (1 char) for maximum compatibility across all BLE stacks."""
 
     def test_device_name_is_short_and_identifiable(self):
-        # 'Velo' is 4 chars — fits all BLE stacks (macOS CoreBluetooth,
-        # Windows WinRT, Linux BlueZ) without truncation.
-        assert config.BLE_DEVICE_NAME == "Velo", (
-            f"Expected 'Velo' (4 chars, fits all platforms), got '{config.BLE_DEVICE_NAME}'"
+        # 'V' is 1 char — fits all BLE stacks (macOS CoreBluetooth,
+        # Windows WinRT, Linux BlueZ) without truncation, and leaves
+        # maximum room for service UUIDs in the 28-byte advertisement.
+        # The name is intentionally minimal because:
+        #   - On macOS, the user identifies the device by 'V' in MyWhoosh
+        #   - On Windows, the device name falls back to system adapter name
+        #     anyway (WinRT limitation — see README 'Known Issues')
+        #   - On Linux, the name is used as-is
+        assert config.BLE_DEVICE_NAME == "V", (
+            f"Expected 'V' (1 char, max compatibility), got '{config.BLE_DEVICE_NAME}'"
         )
 
     def test_device_name_fits_all_advert_budgets(self):
@@ -298,22 +304,19 @@ class TestCalculatePowerIsStatic:
 # ============================================================================
 
 class TestRequirementsPinned:
-    """requirements.txt should pin bless to a specific version (PyPI or git commit)."""
+    """requirements.txt should pin bless to a stable PyPI version range."""
 
     def test_bless_version_pinned(self):
         req_text = Path("requirements.txt").read_text(encoding="utf-8")
-        # Should contain a bless line that's either:
-        #   - PyPI version pin with upper bound: "bless>=0.3.0,<0.4.0"
-        #   - PyPI exact pin: "bless==0.3.0"
-        #   - Git commit pin (for pre-release fixes): "bless @ git+...@<sha>"
+        # Should contain a bless line with both lower and upper bounds
+        # e.g. "bless>=0.3.0,<0.4.0" (PyPI stable pin)
         bless_lines = [l for l in req_text.splitlines() if l.strip().startswith("bless")]
         assert len(bless_lines) >= 1, "bless should be in requirements.txt"
         bless_line = bless_lines[0]
-        is_pypi_pin = ("<" in bless_line) or ("==" in bless_line)
-        is_git_pin = "git+" in bless_line and "@" in bless_line
-        assert is_pypi_pin or is_git_pin, (
-            f"bless should be version-pinned (PyPI <, PyPI ==, or git @ commit). "
-            f"Got: {bless_line}"
+        # Must have upper bound (<) — prevents unexpected breakage from minor upgrades
+        # Must NOT be a git pin (we reverted to PyPI stable)
+        assert ("<" in bless_line) and ("git+" not in bless_line), (
+            f"bless should be PyPI-pinned with upper bound. Got: {bless_line}"
         )
 
     def test_no_bleak_upper_pin_on_windows(self):
@@ -326,26 +329,22 @@ class TestRequirementsPinned:
             "bleak<1.0 pin was removed — bless 0.3.0 itself requires bleak>=1.1.1"
         )
 
-    def test_bless_git_pin_or_pypi_pin(self):
-        """bless should be pinned to either a PyPI version range OR a specific
-        git commit (the latter is used to access fixes not yet on PyPI, like
-        the winrt dependency conflict fix from April 2026)."""
+    def test_bless_pypi_pin(self):
+        """bless should be pinned to a stable PyPI version range (0.3.x).
+        We tried git master (commit a27e1c25) but it introduced breaking API
+        changes that we couldn't work around cleanly. Reverted to PyPI stable."""
         req_text = Path("requirements.txt").read_text(encoding="utf-8")
         bless_lines = [l for l in req_text.splitlines() if l.strip().startswith("bless")]
         assert len(bless_lines) >= 1, "bless should be in requirements.txt"
         bless_line = bless_lines[0].strip()
-        # Acceptable forms:
-        #   bless>=0.3.0,<0.4.0          (PyPI range pin)
-        #   bless==0.3.0                  (PyPI exact pin)
-        #   bless @ git+https://...@sha   (git commit pin)
-        if "git+" in bless_line:
-            assert "@" in bless_line, (
-                f"git pin should include @commit-sha, got: {bless_line}"
-            )
-        else:
-            assert ("<" in bless_line) or ("==" in bless_line), (
-                f"PyPI pin should have < or ==, got: {bless_line}"
-            )
+        # Must NOT be a git pin (we reverted to PyPI stable)
+        assert "git+" not in bless_line, (
+            f"bless should be PyPI-pinned (not git). Got: {bless_line}"
+        )
+        # Must have upper bound to prevent unexpected upgrades
+        assert "<" in bless_line, (
+            f"bless should have upper bound pin (e.g. <0.4.0). Got: {bless_line}"
+        )
 
 
 # ============================================================================
@@ -355,63 +354,51 @@ class TestRequirementsPinned:
 class TestPlatformCompatibility:
     """Verify the project's documented platform constraints are consistent."""
 
-    def test_windows_python_versions_supported(self):
-        """On Windows, Python 3.11 and 3.12 are supported. Python 3.13+ is
-        not yet tested (may work, no guarantee) — but we no longer FAIL the
-        test on 3.12+ since the bless git pin fixes the dependency conflict."""
+    def test_windows_python_311_required(self):
+        """On Windows, only Python 3.11 is supported (due to bless 0.3.0
+        dependency conflict on Python 3.12+ — see requirements.txt).
+        If we're on Windows + Python 3.12+, fail loudly so the user knows
+        to switch."""
         import platform
         import sys
 
         if platform.system() == "Windows":
             py_version = sys.version_info
-            # 3.11 and 3.12 are officially supported
-            if py_version >= (3, 13):
-                # We don't fail the test on 3.13+, just print a warning
-                # (the user can still try it — bless master might work)
-                import warnings
-                warnings.warn(
-                    f"Python {py_version.major}.{py_version.minor} on Windows is "
-                    f"not officially tested with bless master. Python 3.11 or 3.12 "
-                    f"is recommended. Proceed at your own risk.",
-                    UserWarning,
+            if py_version >= (3, 12):
+                pytest.fail(
+                    f"VeloTracker does NOT support Python {py_version.major}.{py_version.minor} "
+                    f"on Windows. bless 0.3.0 has an internal dependency conflict "
+                    f"on Python 3.12+. Please install Python 3.11.9 from "
+                    f"https://www.python.org/downloads/release/python-3119/ and recreate "
+                    f"your venv with: py -3.11 -m venv .venv"
                 )
-            # Minimum supported version is 3.9
+            # On Windows + Python 3.11, we're good
             assert py_version >= (3, 9), "Python 3.9+ required"
 
-    def test_bless_advertisement_data_available(self):
-        """The bless git pin (commit a27e1c25) includes BlessAdvertisementData
-        (PR #159) which we use for unified advertising across platforms.
-        Verify it's importable."""
-        try:
-            from bless.backends.advertisement import BlessAdvertisementData
-            adv = BlessAdvertisementData(local_name="test", service_uuids=[])
-            assert adv.local_name == "test"
-        except ImportError as e:
-            pytest.fail(
-                f"BlessAdvertisementData should be available with bless git pin. "
-                f"Got ImportError: {e}. Check requirements.txt for the bless pin."
-            )
-
-    def test_bless_writable_permission_compatible(self):
-        """bless master renamed GATTAttributePermissions.writeable → writable
-        (without the 'e'). Our code must be compatible with both versions
-        (so users can run either bless 0.3.0 from PyPI or bless master from git).
-        Verify that our _PERM_WRITE helper resolves to a valid permission."""
+    def test_bless_0_3_0_api_compatible(self):
+        """We use bless 0.3.0 from PyPI (stable). Verify that the API we depend
+        on is available:
+          - GATTAttributePermissions.writeable (NOT 'writable' — that's bless master)
+          - BlessAdvertisementData should NOT exist (bless master API)
+        """
         from bless import GATTAttributePermissions
-        # Import the _PERM_WRITE helper from ble_server
-        from modules.ble_server import _PERM_WRITE
-        # It should be one of the writable permissions from bless
-        assert _PERM_WRITE is not None
-        # Verify it's a valid value from GATTAttributePermissions (not random)
-        valid_writable_perms = [
-            getattr(GATTAttributePermissions, name)
-            for name in ["writable", "writeable"]
-            if hasattr(GATTAttributePermissions, name)
-        ]
-        assert _PERM_WRITE in valid_writable_perms, (
-            f"_PERM_WRITE should be a valid writable permission, got {_PERM_WRITE}. "
-            f"Valid options: {valid_writable_perms}"
+        # bless 0.3.0 uses 'writeable' (with the 'e')
+        assert hasattr(GATTAttributePermissions, "writeable"), (
+            "GATTAttributePermissions.writeable should exist in bless 0.3.0. "
+            "If you see this fail, you may have bless master installed — "
+            "reinstall with: pip install 'bless>=0.3.0,<0.4.0'"
         )
+        # BlessAdvertisementData should NOT be importable (bless 0.3.0 doesn't have it)
+        try:
+            from bless.backends.advertisement import BlessAdvertisementData  # noqa: F401
+            pytest.fail(
+                "BlessAdvertisementData should NOT be available — we use bless 0.3.0 "
+                "from PyPI which doesn't have it. If you have bless master installed, "
+                "reinstall with: pip install 'bless>=0.3.0,<0.4.0'"
+            )
+        except ImportError:
+            # Expected — bless 0.3.0 doesn't have BlessAdvertisementData
+            pass
 
 
 # ============================================================================
