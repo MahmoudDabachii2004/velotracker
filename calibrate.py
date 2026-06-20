@@ -40,13 +40,16 @@ class Calibrator:
         hsv = param
         if hsv is None:
             return
+        # Ignore clicks on the right (mask) half of the window to avoid IndexError
+        if x >= hsv.shape[1]:
+            return
         h, s, v = hsv[y, x]
         self._clicked_hsv = (h, s, v)
         self._h_min = max(0, int(h) - 15)
         self._h_max = min(179, int(h) + 15)
-        self._s_min = max(0, int(s) - 50)
+        self._s_min = max(50, min(int(s) - 50, 65))
         self._s_max = 255
-        self._v_min = max(0, int(v) - 50)
+        self._v_min = max(45, min(int(v) - 50, 60))
         self._v_max = 255
         for name, val in [("H min", self._h_min), ("H max", self._h_max),
                           ("S min", self._s_min), ("S max", self._s_max),
@@ -91,7 +94,9 @@ class Calibrator:
                 ok, frame = camera.read()
                 if not ok:
                     break
-                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                # Apply the same Gaussian blur preprocessing as detector.py
+                blurred = cv2.GaussianBlur(frame, (7, 7), 0)
+                hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
 
                 self._h_min = cv2.getTrackbarPos("H min", self._win)
                 self._h_max = cv2.getTrackbarPos("H max", self._win)

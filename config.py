@@ -13,13 +13,13 @@ import numpy as np
 #   Orange: H 10-25 | Red: H 0-10 + 170-180 | Yellow: H 25-35
 #   Green: H 36-66   | Blue: H 90-130
 # ============================================================================
-HSV_LOWER = np.array([35, 114, 95])
-HSV_UPPER = np.array([65, 255, 255])
+HSV_LOWER = np.array([37, 62, 60])
+HSV_UPPER = np.array([67, 255, 255])
 
 # ============================================================================
 # CAMERA
 # ============================================================================
-CAMERA_INDEX = 1          # 0=built-in webcam, 1=iPhone via IriunWebcam (usually)
+CAMERA_INDEX = 0          # 0=built-in webcam, 1=iPhone via IriunWebcam (usually)
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
@@ -27,10 +27,10 @@ CAMERA_FPS = 30
 # ============================================================================
 # DETECTION
 # ============================================================================
-MIN_CONTOUR_AREA = 500
+MIN_CONTOUR_AREA = 150
 MORPH_KERNEL_SIZE = 5
 MORPH_ITERATIONS = 2
-MIN_CIRCULARITY = 0.5
+MIN_CIRCULARITY = 0.15
 CLAHE_CLIP_LIMIT = 3.0
 CLAHE_TILE_SIZE = 8       # Size of grid for local contrast equalization (e.g. 8x8)
 
