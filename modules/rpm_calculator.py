@@ -8,24 +8,51 @@ from typing import Optional, Tuple
 import numpy as np
 import config
 
+# Tier 3 AMÉLIO #10: Hyperfit (Al-Sharadqah & Chernov 2009) is the only
+# algebraic circle fit with zero essential bias, and outperforms even the
+# iterative geometric fit at high noise (per their Monte Carlo experiments).
+# Used during calibration (partial arcs) where Taubin is less accurate.
+# Falls back to our hand-rolled Taubin if circle-fit package is not installed.
+try:
+    from circle_fit import hyper_fit as _hyper_fit_external
+    _HAS_HYPERFIT = True
+except ImportError:
+    _HAS_HYPERFIT = False
+
 
 class StickerKalmanFilter:
-    def __init__(self, q: float = 100000.0, r: float = 9.0):
+    """4-D linear Kalman filter for sticker position (x, y, vx, vy).
+
+    Tier 3 BUG #17: Tuned Q/R values based on actual pedal dynamics.
+    - q (process noise): was 100000, now 10^8. The pedal at 80 RPM with
+      r=150px has centripetal accel = omega^2 * r = (8.4)^2 * 150 = 10600 px/s^2.
+      The implied accel std with q=100000 was sqrt(100000) = 316 px/s^2 —
+      30x too small, causing the filter to over-smooth and lag the actual motion.
+      q=10^8 gives sqrt(10^8) = 10000 px/s^2, closer to actual centripetal accel.
+    - r (measurement noise): was 9 (sigma=3px), now 4 (sigma=2px). OpenCV+HSV
+      centroid detection is typically 1-2px noise in good lighting.
+    - initial P: was 10*I, now 1000*I. The filter trusted its uninitialized
+      state too much early on; larger initial P lets it adapt faster in the
+      first 10 frames.
+    """
+
+    def __init__(self, q: float = 1e8, r: float = 4.0):
         self.q = q
         self.r = r
         self.state = None
-        self.P = np.eye(4) * 10.0
+        # Tier 3 BUG #17: initial P = 1000*I (was 10*I) for faster convergence
+        self.P = np.eye(4) * 1000.0
         self.last_time = None
 
     def reset(self):
         self.state = None
-        self.P = np.eye(4) * 10.0
+        self.P = np.eye(4) * 1000.0
         self.last_time = None
 
     def predict_and_update(self, x: float, y: float, timestamp: float) -> Tuple[float, float]:
         if self.last_time is None or self.state is None:
             self.state = np.array([x, y, 0.0, 0.0])
-            self.P = np.eye(4) * 10.0
+            self.P = np.eye(4) * 1000.0
             self.last_time = timestamp
             return x, y
 
@@ -33,7 +60,12 @@ class StickerKalmanFilter:
         if dt <= 0:
             return float(self.state[0]), float(self.state[1])
 
-        dt = min(dt, 0.2)
+        # Tier 3 BUG #17: if dt is too large (frame drop > 0.2s), reset
+        # the filter instead of using a clamped dt (which gave wrong predictions).
+        if dt > 0.2:
+            self.reset()
+            self.state = np.array([x, y, 0.0, 0.0])
+            return x, y
 
         F = np.array([
             [1.0, 0.0,  dt, 0.0],
@@ -62,12 +94,15 @@ class StickerKalmanFilter:
         z = np.array([x, y])
         y_residual = z - np.dot(H, self.state)
         S = np.dot(H, np.dot(self.P, H.T)) + R
-        
+
         try:
             S_inv = np.linalg.inv(S)
             K = np.dot(self.P, np.dot(H.T, S_inv))
             self.state = self.state + np.dot(K, y_residual)
-            self.P = np.dot(np.eye(4) - np.dot(K, H), self.P)
+            # Tier 3 BUG #17: Joseph-form covariance update for numerical stability
+            # P = (I - KH)P(I - KH)^T + KRK^T  (more stable than P = (I-KH)P)
+            I_minus_KH = np.eye(4) - np.dot(K, H)
+            self.P = np.dot(I_minus_KH, np.dot(self.P, I_minus_KH.T)) + np.dot(K, np.dot(R, K.T))
         except np.linalg.LinAlgError:
             self.reset()
             self.state = np.array([x, y, 0.0, 0.0])
@@ -102,7 +137,7 @@ class RPMCalculator:
         self._last_rev_event_time: float = time.time()
         self._current_rpm: float = 0.0
         self._raw_rpm: float = 0.0
-        self._angular_window: deque = deque(maxlen=config.RPM_REGRESSION_WINDOW)
+        self._angular_window: deque = deque(maxlen=200)  # large buffer; pruned by time in _estimate_rpm
         self._tracking_positions: deque = deque(maxlen=config.TRACKING_FIT_WINDOW)
         self._last_detection_time: float = time.time()
         self._last_update_time: float = time.time()
@@ -129,13 +164,43 @@ class RPMCalculator:
         self._alpha = 0.0
         self._kalman.reset()
 
-    def _fit_circle(self, positions):
-        """Taubin algebraic circle fit — better than Kasa for partial arcs."""
+    def _fit_circle(self, positions, use_hyperfit: bool = False):
+        """Circle fit using Taubin (default) or Hyperfit (for partial arcs).
+
+        Tier 3 AMÉLIO #10: Added Hyperfit option (Al-Sharadqah & Chernov 2009).
+        Hyperfit has zero essential bias — the only algebraic method with this
+        property. It outperforms even the iterative geometric fit at high noise
+        and on partial arcs (per Monte Carlo experiments in the paper).
+
+        Use Hyperfit during calibration (where the arc is partial — we may have
+        only 1/4 of the circle). Use Taubin for continuous tracking (where the
+        150-frame window contains 6+ revolutions and the difference is negligible).
+
+        Falls back to Taubin if the `circle-fit` package is not installed.
+        """
         pts = np.array(positions, dtype=np.float64)
         n = len(pts)
         if n < 5:
             return None, 0.0, float('inf')
 
+        # Tier 3 AMÉLIO #10: Try Hyperfit first (if available and requested)
+        if use_hyperfit and _HAS_HYPERFIT:
+            try:
+                # circle_fit.hyper_fit returns (xc, yc, r, error_metric)
+                # It expects an array of shape (n, 2) where col 0 = x, col 1 = y
+                xc, yc, r, _ = _hyper_fit_external(pts)
+                if r > 0 and math.isfinite(r):
+                    center = (float(xc), float(yc))
+                    # Compute residual error (std of distances from fitted radius)
+                    dists = np.sqrt((pts[:, 0] - center[0])**2 + (pts[:, 1] - center[1])**2)
+                    std = np.std(dists)
+                    cv = std / r if r > 0 else float('inf')
+                    return center, float(r), float(cv)
+            except Exception:
+                # Fall through to Taubin if Hyperfit fails
+                pass
+
+        # Taubin algebraic circle fit (default / fallback)
         # Centering data for numerical stability
         centroid = np.mean(pts, axis=0)
         u = pts[:, 0] - centroid[0]
@@ -243,7 +308,7 @@ class RPMCalculator:
         self._cal_positions.append((cx, cy))
         if len(self._cal_positions) < config.CALIBRATION_FRAMES:
             return
-        center, radius, cv = self._fit_circle(self._cal_positions)
+        center, radius, cv = self._fit_circle(self._cal_positions, use_hyperfit=True)
         if center and radius >= config.MIN_RADIUS_PX and cv < 0.5:
             self._center = center
             self._radius = radius
@@ -370,30 +435,48 @@ class RPMCalculator:
                 self._current_rpm = 0.0
 
     def _estimate_rpm(self, timestamp: float):
+        # Tier 3 BUG #16: prune _angular_window by TIME, not by sample count.
+        # The old code used deque(maxlen=config.RPM_REGRESSION_WINDOW=20) which
+        # broke under variable FPS (IriunWebcam silently drops frames). At 15 FPS,
+        # 20 samples = 1.33s; at 60 FPS, 20 samples = 0.33s — the regression
+        # time base changed with frame rate.
+        # Now: keep all samples within RPM_REGRESSION_WINDOW_SEC (default 0.67s).
+        # Falls back to sample-count (RPM_REGRESSION_SAMPLES) if SEC = 0.
+        window_sec = getattr(config, "RPM_REGRESSION_WINDOW_SEC", 0.67)
+        if window_sec > 0:
+            cutoff = timestamp - window_sec
+            while self._angular_window and self._angular_window[0][0] < cutoff:
+                self._angular_window.popleft()
+        else:
+            # Legacy fallback: keep last N samples
+            legacy_n = getattr(config, "RPM_REGRESSION_SAMPLES", 20)
+            while len(self._angular_window) > legacy_n:
+                self._angular_window.popleft()
+
         if len(self._angular_window) < 5:
             return
-            
+
         timestamps = np.array([pt[0] for pt in self._angular_window])
         thetas = np.array([pt[1] for pt in self._angular_window])
-        
+
         # Calculate weights using exponential decay (recent samples get higher weight)
         decay = getattr(config, "RPM_WEIGHTED_OLS_LAMBDA", 2.0)
         weights = np.exp(-decay * (timestamp - timestamps))
-        
+
         # Center time vector to make it numerically stable
         t0 = timestamps[0]
         x = timestamps - t0
         y = thetas
-        
+
         Sw = np.sum(weights)
         Sx = np.sum(weights * x)
         Sy = np.sum(weights * y)
         Sxx = np.sum(weights * x * x)
         Sxy = np.sum(weights * x * y)
-        
+
         denom = Sw * Sxx - Sx**2
         omega = (Sw * Sxy - Sx * Sy) / denom if abs(denom) > 1e-6 else 0.0
-        
+
         # Track rotation direction
         if abs(omega) > 0.1:
             self._rotation_direction = 1.0 if omega > 0 else -1.0

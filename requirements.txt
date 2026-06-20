@@ -30,6 +30,10 @@
 # === Core (all platforms) ===
 opencv-python>=4.8
 numpy>=1.24
+# Tier 3 AMELIO #10: circle-fit provides Hyperfit (Al-Sharadqah & Chernov 2009)
+# for zero-bias circle fitting during calibration. Falls back to our hand-rolled
+# Taubin if not installed.
+circle-fit>=0.1.5
 
 # bless is pinned to 0.3.x (the only stable PyPI release as of 2026-06).
 # We tried git master (a27e1c25) but it introduced breaking API changes

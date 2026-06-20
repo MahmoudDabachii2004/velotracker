@@ -43,7 +43,13 @@ RPM_SMOOTHING_WINDOW = 5
 RPM_MIN = 18
 RPM_MAX = 200
 RPM_TIMEOUT_SEC = 3.0
-RPM_REGRESSION_WINDOW = 20
+# Tier 3 BUG #16: RPM_REGRESSION_WINDOW is now TIME-BASED (seconds), not sample-count.
+# At 30 FPS, 0.67s = 20 samples (matches the old default).
+# At 15 FPS (IriunWebcam slow), 0.67s = 10 samples (the time window stays the same).
+# This makes the RPM regression behavior consistent regardless of frame rate.
+# Set to 0 to use the legacy sample-count behavior (RPM_REGRESSION_SAMPLES).
+RPM_REGRESSION_WINDOW_SEC = 0.67
+RPM_REGRESSION_SAMPLES = 20  # legacy fallback if RPM_REGRESSION_WINDOW_SEC = 0
 TRACKING_FIT_WINDOW = 150
 
 # Advanced RPM Tuning
