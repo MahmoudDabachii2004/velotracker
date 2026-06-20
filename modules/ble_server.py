@@ -481,14 +481,26 @@ class BLECadenceServer:
             # The new BlessAdvertisementData API (PR #159, merged 2025)
             # lets us pass a single advertising payload.
             #
-            # Note on platform behavior (per BlessAdvertisementData.__post_init__):
-            #   - macOS: local_name + service_uuids are NOT used by the new API
-            #     (CoreBluetooth uses BlessServer.name + prioritize_local_name kwarg)
-            #   - Windows: local_name is used via _adapter.set_local_name()
-            #   - Linux: all fields are used
+            # PLATFORM-SPECIFIC BEHAVIOR (per BlessAdvertisementData.__post_init__):
             #
-            # So we still pass prioritize_local_name=True on macOS for the name,
-            # AND we pass advertisement_data for the Windows/Linux paths.
+            #   macOS (Darwin):
+            #     - local_name + service_uuids NOT used by advertisement_data
+            #       (CoreBluetooth uses BlessServer.name + prioritize_local_name kwarg)
+            #     - We still pass them for documentation; they're ignored.
+            #
+            #   Windows (WinRT):
+            #     - local_name IS used → triggers a Windows Registry write (HKLM)
+            #       to rename the Bluetooth adapter system-wide. REQUIRES ADMIN.
+            #     - If run as a normal user → PermissionError [WinError 5].
+            #     - Our strategy: try WITH local_name first (so admin users get
+            #       "Velo" as device name), and fall back WITHOUT local_name
+            #       (system adapter name) if PermissionError.
+            #     - service_uuids NOT used (per warning).
+            #     - is_connectable + is_discoverable ARE used.
+            #
+            #   Linux (BlueZ):
+            #     - All fields used (local_name, service_uuids, etc.)
+            #     - is_connectable + is_discoverable NOT used (per warning).
             adv_data = None
             if _HAS_BLESS_ADVERTISEMENT_DATA:
                 # The 3 service UUIDs we advertise (so clients can discover us
@@ -499,28 +511,61 @@ class BLECadenceServer:
                     "00001818-0000-1000-8000-00805f9b34fb",  # CPS  (0x1818)
                     "00001816-0000-1000-8000-00805f9b34fb",  # CSC  (0x1816)
                 ]
-                adv_data = BlessAdvertisementData(
-                    local_name=config.BLE_DEVICE_NAME,
-                    service_uuids=service_uuids_16bit,
-                    is_connectable=True,
-                    is_discoverable=True,
-                )
 
-            if _PLATFORM == "Darwin":
-                # macOS: prioritize_local_name=True puts the device name in
-                # the primary advertisement (required for MyWhoosh to show
-                # "Velo" instead of "device-XXXX" before Scan Response arrives).
-                # advertisement_data is also passed but on macOS the local_name
-                # and service_uuids fields are ignored (the kwarg controls it).
-                await self._server.start(
-                    advertisement_data=adv_data,
-                    prioritize_local_name=True,
-                )
-            else:
-                # Windows + Linux: advertisement_data is the primary control.
-                # On Windows, local_name propagates via _adapter.set_local_name().
-                # On Linux, all fields are used by the BlueZ backend.
-                await self._server.start(advertisement_data=adv_data)
+                if _PLATFORM == "Windows":
+                    # On Windows: BlessAdvertisementData.local_name triggers a
+                    # HKLM registry write that requires Administrator privileges.
+                    # We try WITH local_name first (best case: "Velo" works),
+                    # then fall back to WITHOUT local_name if PermissionError
+                    # (worse case: device name is the system adapter name).
+                    # We pre-build both variants to avoid race conditions.
+                    adv_data_with_name = BlessAdvertisementData(
+                        local_name=config.BLE_DEVICE_NAME,
+                        is_connectable=True,
+                        is_discoverable=True,
+                    )
+                    adv_data_without_name = BlessAdvertisementData(
+                        is_connectable=True,
+                        is_discoverable=True,
+                    )
+                    # Will retry below
+                    adv_data = adv_data_with_name
+                else:
+                    # macOS + Linux: pass all fields (local_name + service_uuids).
+                    # On macOS they're ignored, on Linux they're used.
+                    adv_data = BlessAdvertisementData(
+                        local_name=config.BLE_DEVICE_NAME,
+                        service_uuids=service_uuids_16bit,
+                        is_connectable=True,
+                        is_discoverable=True,
+                    )
+
+            # Try to start advertising. On Windows, the first attempt may fail
+            # with PermissionError if not running as Administrator (because
+            # local_name triggers a HKLM registry write). In that case, retry
+            # WITHOUT local_name so the server can still start (device name
+            # will fall back to the system adapter name).
+            try:
+                if _PLATFORM == "Darwin":
+                    await self._server.start(
+                        advertisement_data=adv_data,
+                        prioritize_local_name=True,
+                    )
+                else:
+                    await self._server.start(advertisement_data=adv_data)
+            except PermissionError as e:
+                if _PLATFORM == "Windows" and _HAS_BLESS_ADVERTISEMENT_DATA:
+                    print(f"[BLE] WARNING: PermissionError when setting device name "
+                          f"(requires Administrator). Retrying without local_name...")
+                    print(f"[BLE]   Error: {e}")
+                    print(f"[BLE]   The device will use the system adapter name "
+                          f"(e.g. 'Device-XXXXXX') instead of '{config.BLE_DEVICE_NAME}'.")
+                    print(f"[BLE]   To fix: run Terminal/PowerShell as Administrator.")
+                    adv_data = adv_data_without_name  # type: ignore
+                    await self._server.start(advertisement_data=adv_data)
+                else:
+                    # On macOS/Linux, PermissionError shouldn't happen — re-raise
+                    raise
             self._status = "Advertising"
             print(f"[BLE] '{config.BLE_DEVICE_NAME}' is advertising.")
             print(f"[BLE] Open MyWhoosh -> Device Connection -> Controllable -> pair with '{config.BLE_DEVICE_NAME}'.")

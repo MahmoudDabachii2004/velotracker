@@ -268,6 +268,26 @@ sudo killall bluetoothd
 2. **Pair by service UUID, not by name.** In MyWhoosh, when you see the 2 "Device-XXXXXX" entries, try each one — only one will actually respond to FTMS pairing. Once paired, MyWhoosh will remember it.
 3. **Wait for bless 0.4.0+.** The maintainers are aware of the WinRT device name issue. Once a new bless version is released with the fix, this problem should disappear.
 
+### Device name "Velo" only shows when running as Administrator (Windows host)
+**Symptom:** On Windows host, when you run `python ble_diagnostic.py` as a normal user, you get:
+```
+[BLE] ERROR: [WinError 5] Access is denied
+```
+When you run it as Administrator, it works and MyWhoosh sees "Velo".
+
+**Cause:** When `BlessAdvertisementData(local_name="Velo")` is passed on Windows, bless internally calls `_adapter.set_local_name()` which writes to the Windows Registry (HKLM) to rename the Bluetooth adapter system-wide. HKLM writes require Administrator privileges.
+
+**Fix (recommended):** Run your terminal as Administrator when using VeloTracker on Windows:
+- Right-click PowerShell/Terminal → "Run as administrator"
+- Or run via an elevated shortcut
+
+**Automatic fallback:** VeloTracker now tries with `local_name` first, and if it gets `PermissionError`, automatically retries without `local_name`. The server will still start, but the device name will be the system adapter name (e.g. "Device-XXXXXX") instead of "Velo". You'll see this warning:
+```
+[BLE] WARNING: PermissionError when setting device name (requires Administrator).
+[BLE]   The device will use the system adapter name (e.g. 'Device-XXXXXX') instead of 'Velo'.
+[BLE]   To fix: run Terminal/PowerShell as Administrator.
+```
+
 ### macOS host shows different name on different clients
 **Symptom:** macOS host exposes "Velo" correctly, but Windows client sees a different name (or no name) for the same device.
 
