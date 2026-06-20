@@ -171,7 +171,7 @@ class TestDetectorNoRedundantEMA:
         """DetectionResult.cx should equal raw_cx (no EMA smoothing applied)."""
         # We can't easily run a full detection without a real frame + camera,
         # but we can verify the detector.py source doesn't reference _smooth_cx in the return.
-        detector_src = Path("modules/detector.py").read_text()
+        detector_src = Path("modules/detector.py").read_text(encoding="utf-8")
         # The return statement should use raw_cx, not _smooth_cx
         assert "cx=raw_cx" in detector_src or "cx=raw_cx," in detector_src, (
             "Detector should return raw_cx directly (no EMA). "
@@ -187,7 +187,7 @@ class TestBLEDiagnosticUsesRealPower:
     """ble_diagnostic.py should call server._calculate_power, not hardcode linear formula."""
 
     def test_no_hardcoded_linear_formula(self):
-        diag_src = Path("ble_diagnostic.py").read_text()
+        diag_src = Path("ble_diagnostic.py").read_text(encoding="utf-8")
         # The old buggy line was: expected_power = int(current_rpm * 0.8 + 30.0)
         assert "current_rpm * 0.8 + 30" not in diag_src, (
             "ble_diagnostic.py still has hardcoded linear power formula"
@@ -206,7 +206,7 @@ class TestUnifiedDecay:
 
     def test_no_hardcoded_080_decay(self):
         """The _estimate_rpm method should reference RPM_DECAY_FACTOR, not hardcode 0.80."""
-        rpm_src = Path("modules/rpm_calculator.py").read_text()
+        rpm_src = Path("modules/rpm_calculator.py").read_text(encoding="utf-8")
         # The old buggy line was: self._current_rpm *= 0.80
         # We allow the literal 0.80 to appear in comments, but not in a *= assignment
         bad_pattern = "self._current_rpm *= 0.80"
@@ -216,7 +216,7 @@ class TestUnifiedDecay:
 
     def test_estimate_rpm_uses_config_decay(self):
         """_estimate_rpm should reference RPM_DECAY_FACTOR for the decay path."""
-        rpm_src = Path("modules/rpm_calculator.py").read_text()
+        rpm_src = Path("modules/rpm_calculator.py").read_text(encoding="utf-8")
         # Find the _estimate_rpm method (between def _estimate_rpm and the next def)
         start = rpm_src.find("def _estimate_rpm")
         end = rpm_src.find("def ", start + 10)
@@ -301,7 +301,7 @@ class TestRequirementsPinned:
     """requirements.txt should pin bless to a specific major version range."""
 
     def test_bless_version_pinned(self):
-        req_text = Path("requirements.txt").read_text()
+        req_text = Path("requirements.txt").read_text(encoding="utf-8")
         # Should contain a bless line with both lower and upper bounds
         # e.g. "bless>=0.3.0,<0.4.0" or "bless==0.3.0"
         bless_lines = [l for l in req_text.splitlines() if l.strip().startswith("bless")]
@@ -316,7 +316,7 @@ class TestRequirementsPinned:
         """We previously tried 'bleak<1.0' on Windows, but bless 0.3.0 REQUIRES
         bleak>=1.1.1, so bleak<1.0 is impossible. The conflict is inside bless itself.
         requirements.txt should NOT pin bleak to <1.0 anywhere."""
-        req_text = Path("requirements.txt").read_text()
+        req_text = Path("requirements.txt").read_text(encoding="utf-8")
         # The old broken line was: bleak>=0.22,<1.0; sys_platform == "win32"
         assert "bleak>=0.22,<1.0" not in req_text, (
             "bleak<1.0 pin was removed — bless 0.3.0 itself requires bleak>=1.1.1"
@@ -325,12 +325,12 @@ class TestRequirementsPinned:
     def test_python_311_required_documented_on_windows(self):
         """Since bless 0.3.0 has an unsolvable conflict on Windows + Python 3.12+,
         requirements.txt MUST document that Python 3.11 is required on Windows."""
-        req_text = Path("requirements.txt").read_text()
+        req_text = Path("requirements.txt").read_text(encoding="utf-8")
         assert "Python 3.11" in req_text or "3.11" in req_text, (
             "requirements.txt should document Python 3.11 requirement on Windows"
         )
         # The README should also document this
-        readme_text = Path("README.md").read_text()
+        readme_text = Path("README.md").read_text(encoding="utf-8")
         assert "Python 3.11" in readme_text or "3.11" in readme_text, (
             "README should document Python 3.11 requirement on Windows"
         )
@@ -371,7 +371,7 @@ class TestTestFiltersCrossPlatform:
     """test_filters.py should NOT hardcode a Windows path."""
 
     def test_no_hardcoded_windows_path(self):
-        tf_src = Path("test_filters.py").read_text()
+        tf_src = Path("test_filters.py").read_text(encoding="utf-8")
         # The old buggy line was: sys.path.insert(0, r"c:\Users\newMahmoud\velotracker")
         assert "c:\\Users" not in tf_src and "C:\\Users" not in tf_src, (
             "test_filters.py should not hardcode Windows user path"
@@ -390,7 +390,7 @@ class TestReadmeMentionsTaubin:
     """README should say 'Taubin' (the actual algorithm), not 'Kasa'."""
 
     def test_no_kasa_in_readme(self):
-        readme = Path("README.md").read_text()
+        readme = Path("README.md").read_text(encoding="utf-8")
         # Kasa is allowed in the comparison sentence ("Taubin is much more stable than Kasa")
         # but NOT in standalone claims like "Kasa circle fit + OLS regression -> RPM"
         # We check that "Kasa circle fit" doesn't appear (it should be "Taubin circle fit")
@@ -399,7 +399,7 @@ class TestReadmeMentionsTaubin:
         )
 
     def test_taubin_mentioned_in_readme(self):
-        readme = Path("README.md").read_text()
+        readme = Path("README.md").read_text(encoding="utf-8")
         assert "Taubin" in readme, "README should mention Taubin (the actual algorithm used)"
 
 

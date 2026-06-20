@@ -443,11 +443,23 @@ class BLECadenceServer:
             await self._server.add_gatt(gatt_dict)
 
             print("[BLE] Starting advertising...")
-            # On macOS: prioritize_local_name=False tells bless to broadcast
-            # the service UUIDs in the advertisement (needed for MyWhoosh).
+            # On macOS: prioritize_local_name=True puts the device name in the
+            # primary advertisement (not the Scan Response). This is what real
+            # smart trainers do — and it's required for MyWhoosh to display the
+            # user-defined name ("Velo") instead of the macOS fallback
+            # "device-XXXX" name when the Scan Response hasn't been received yet.
+            #
+            # The previous setting (False) was causing MyWhoosh on macOS to
+            # display "device-XXXX" because the name was only in the Scan
+            # Response, which may not be received on the first scan cycle.
+            #
+            # Trade-off: with prioritize_local_name=True, the 3 service UUIDs
+            # (FTMS + CPS + CSC = 6 bytes) are moved to the Scan Response.
+            # This is fine because MyWhoosh reads the Scan Response anyway.
+            #
             # On Windows/Linux: this kwarg is accepted via **kwargs but ignored.
             if _PLATFORM == "Darwin":
-                await self._server.start(prioritize_local_name=False)
+                await self._server.start(prioritize_local_name=True)
             else:
                 await self._server.start()
             self._status = "Advertising"
