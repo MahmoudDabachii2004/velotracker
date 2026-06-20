@@ -404,6 +404,44 @@ class TestReadmeMentionsTaubin:
 
 
 # ============================================================================
+# Documentation: Known Issues section (cross-platform BLE quirks)
+# ============================================================================
+
+class TestKnownIssuesDocumented:
+    """README must document the cross-platform BLE device name quirks
+    discovered during testing (macOS suffix, Windows Device-XXXX, 2 devices)."""
+
+    def test_known_issues_section_exists(self):
+        readme = Path("README.md").read_text(encoding="utf-8")
+        assert "## Known Issues" in readme, (
+            "README should have a 'Known Issues' section documenting BLE quirks"
+        )
+
+    def test_macos_suffix_documented(self):
+        """'Velo-XXXX' suffix on macOS client when Mac hosts must be documented."""
+        readme = Path("README.md").read_text(encoding="utf-8")
+        assert "Velo-" in readme or "suffix" in readme.lower(), (
+            "README should document the 'Velo-XXXX' suffix issue on macOS clients"
+        )
+
+    def test_windows_device_xxxx_documented(self):
+        """'Device-XXXXXX' on macOS client when Windows hosts must be documented."""
+        readme = Path("README.md").read_text(encoding="utf-8")
+        assert "Device-" in readme, (
+            "README should document the 'Device-XXXXXX' fallback name issue "
+            "when Windows hosts and macOS client connects"
+        )
+
+    def test_multiple_devices_windows_documented(self):
+        """The '2 devices visible' issue when Windows hosts must be documented."""
+        readme = Path("README.md").read_text(encoding="utf-8")
+        # Either "2 devices" or "two devices" or "multiple devices"
+        assert any(p in readme.lower() for p in ["2 devices", "two devices", "multiple devices"]), (
+            "README should document that Windows host can show 2 phantom devices on macOS client"
+        )
+
+
+# ============================================================================
 # Integration: simulate_pedaling still works end-to-end
 # ============================================================================
 

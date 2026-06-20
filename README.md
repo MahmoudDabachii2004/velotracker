@@ -235,6 +235,48 @@ In MyWhoosh, speed should respond to your pedaling.
 
 ---
 
+## Known Issues
+
+### "Velo-1765" suffix on macOS client (when Mac hosts)
+**Symptom:** MyWhoosh on Windows (or other client) sees the device as `Velo-1765` or `Velo-XXXX` with a random 4-digit suffix that changes on every restart.
+
+**Cause:** macOS CoreBluetooth automatically appends a disambiguation suffix when it detects a name collision with a previously-cached device. Since VeloTracker doesn't persist a stable Bluetooth identity across restarts, macOS treats each restart as a "new" device named "Velo" and adds a suffix to distinguish it from the cached one.
+
+**Fix (one-time, per client device):**
+1. On the client machine (the one running MyWhoosh), open Bluetooth settings
+2. Find the previously-paired "Velo" entry → Remove / Forget device
+3. Restart MyWhoosh
+4. Re-scan and pair — the device should now show as just "Velo" without suffix
+
+**Fix (permanent, on macOS host):** You can also clear the CoreBluetooth cache by running this on the Mac host between sessions:
+```bash
+sudo rm -rf /Library/Preferences/com.apple.Bluetooth.plist
+sudo killall bluetoothd
+```
+(⚠️ This will forget ALL your Bluetooth devices — keyboard, mouse, etc. Only do this if you understand the impact.)
+
+### "Device-XXXXXX" appears on macOS client when Windows hosts
+**Symptom:** When running VeloTracker on Windows as host, MyWhoosh on macOS shows 2 generic devices named `Device-E264F830` and `Device-37D07B56` (the hex suffix = part of the Bluetooth MAC address, changes on every restart). The custom name "Velo" doesn't appear at all. Only one of the two devices actually works.
+
+**Cause:** This is a known limitation of `bless 0.3.0` on Windows WinRT:
+- The `prioritize_local_name` parameter (used on macOS to control where the device name appears in the advertisement) is accepted via `**kwargs` on Windows but **silently ignored**.
+- WinRT doesn't expose the custom device name in the primary advertisement packet when multiple GATT services are registered — only the MAC-address-derived fallback name is visible.
+- The "2 devices" you see are: (1) the primary advertisement, and (2) the Scan Response, which macOS interprets as separate devices when their names don't match.
+
+**Workarounds:**
+1. **Use macOS as host when possible.** The macOS CoreBluetooth backend correctly exposes the custom device name, so you'll see "Velo" on all clients.
+2. **Pair by service UUID, not by name.** In MyWhoosh, when you see the 2 "Device-XXXXXX" entries, try each one — only one will actually respond to FTMS pairing. Once paired, MyWhoosh will remember it.
+3. **Wait for bless 0.4.0+.** The maintainers are aware of the WinRT device name issue. Once a new bless version is released with the fix, this problem should disappear.
+
+### macOS host shows different name on different clients
+**Symptom:** macOS host exposes "Velo" correctly, but Windows client sees a different name (or no name) for the same device.
+
+**Cause:** Different BLE stacks interpret the advertising payload slightly differently. macOS CoreBluetooth puts the Local Name in the primary advertisement, but Windows WinRT may need to receive the Scan Response to see the full name. Until the Scan Response is processed, Windows may show a fallback name.
+
+**Fix:** No action needed. Once you pair the device in MyWhoosh, the app caches the proper name. The fallback is only visible during scanning.
+
+---
+
 ## Troubleshooting
 
 ### "Bluetooth permission denied" (macOS)
