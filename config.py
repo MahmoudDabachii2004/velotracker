@@ -54,10 +54,18 @@ RPM_WEIGHTED_OLS_LAMBDA = 2.0 # Exponential decay factor for weighted least-squa
 # ============================================================================
 # BLE (via bless — CoreBluetooth on macOS, WinRT on Windows, BlueZ on Linux)
 # ============================================================================
-# macOS CoreBluetooth advertisement payload is limited to ~28 usable bytes.
-# With 3 service UUIDs (FTMS + CPS + CSC = 6 bytes) + Flags AD (3 bytes)
-# + Local Name (12 bytes for "VeloTracker"), we stay within budget (24 bytes).
-BLE_DEVICE_NAME = "VeloTracker"
+# BLE advertising payload is limited to ~28 usable bytes on macOS CoreBluetooth
+# (similar on Windows WinRT). With 3 service UUIDs (FTMS + CPS + CSC = 6 bytes)
+# + Flags AD (3 bytes) + Local Name header (2 bytes), a 4-char name fits
+# comfortably on all platforms.
+#
+# NOTE on naming: bless/WinRT may silently truncate names longer than ~8 chars
+# in the primary advertisement when multiple service UUIDs are present. To keep
+# the device identifiable across all platforms, we default to "Velo" (4 chars).
+#
+# macOS users who want a more descriptive name can change this to "VeloTracker"
+# (11 chars) — macOS CoreBluetooth handles the full 28-byte budget correctly.
+BLE_DEVICE_NAME = "Velo"
 BLE_NOTIFY_INTERVAL_SEC = 0.5  # 2Hz heartbeat (PeloMon-proven value)
 
 # ============================================================================

@@ -80,22 +80,26 @@ class TestDrivetrainConfig:
 # ============================================================================
 
 class TestBLEDeviceName:
-    """The device name should be 'VeloTracker' (was 'V' — too cryptic)."""
+    """The device name should be short enough to fit all platforms'
+    advertising payload (was 'V' — too cryptic; 'VeloTracker' was too long
+    for Windows WinRT which truncated it to 'VeloTrac')."""
 
-    def test_device_name_is_velotracker(self):
-        assert config.BLE_DEVICE_NAME == "VeloTracker", (
-            f"Expected 'VeloTracker', got '{config.BLE_DEVICE_NAME}'"
+    def test_device_name_is_short_and_identifiable(self):
+        # 'Velo' is 4 chars — fits all BLE stacks (macOS CoreBluetooth,
+        # Windows WinRT, Linux BlueZ) without truncation.
+        assert config.BLE_DEVICE_NAME == "Velo", (
+            f"Expected 'Velo' (4 chars, fits all platforms), got '{config.BLE_DEVICE_NAME}'"
         )
 
-    def test_device_name_fits_macos_advert_budget(self):
-        """macOS CoreBluetooth limits adv payload to ~28 usable bytes.
+    def test_device_name_fits_all_advert_budgets(self):
+        """All BLE stacks (macOS/Windows/Linux) limit adv payload to ~28 usable bytes.
         Budget: Flags (3B) + 3 × 16-bit SVCS (8B) + Local Name (len+2) <= 28.
         """
         name = config.BLE_DEVICE_NAME
         # 3 (Flags) + 2 (AD type+len) + 6 (3 SVCS × 2 bytes) + 2 (Local Name header) + len(name)
         adv_size = 3 + 2 + 6 + 2 + len(name)
         assert adv_size <= 28, (
-            f"Advertising payload would be {adv_size} bytes, exceeds macOS 28-byte budget"
+            f"Advertising payload would be {adv_size} bytes, exceeds 28-byte budget"
         )
 
 

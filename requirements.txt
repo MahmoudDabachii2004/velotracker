@@ -3,17 +3,32 @@
 #
 # Supported platforms:
 #   macOS 12+   — Python 3.9-3.13
-#   Windows 10+ — Python 3.11-3.12 (bless pins winrt-* 2.0.0b1, no 3.13 wheels)
+#   Windows 10+ — Python 3.11 OR 3.12 (see bleak note below)
 #   Linux       — Python 3.9+ (requires BlueZ + D-Bus)
+#
+# WINDOWS + PYTHON 3.12 USERS:
+#   bless 0.3.0 pins winrt-Windows.*==2.0.0b1 on Python 3.12+.
+#   bleak >= 1.0 requires winrt >= 3.1 → dependency conflict.
+#   We pin bleak<1.0 on Windows to use the older bleak-winrt path
+#   which is compatible with bless 0.3.0's pinned winrt version.
+#   Alternative: use Python 3.11 on Windows (avoids the winrt-* path entirely).
 #
 
 # === Core (all platforms) ===
 opencv-python>=4.8
 numpy>=1.24
+
 # bless is pinned to 0.3.x because modules/ble_server.py relies on internals
 # (BLEAdapter.__init__ on Windows, BlessServerWinRT.start) that may break on
 # a major version bump. Update the monkeypatches before upgrading bless.
 bless>=0.3.0,<0.4.0
+
+# bleak must be < 1.0 on Windows because:
+#   - bless 0.3.0 pins winrt-Windows.Devices.Bluetooth==2.0.0b1 (on Python 3.12+)
+#   - bleak >= 1.0 requires winrt-Windows.Devices.Bluetooth>=3.1 (incompatible)
+#   - bleak 0.22.x accepts winrt >=2,<3 → compatible with bless 0.3.0
+# On macOS/Linux, bleak version doesn't matter (bless uses pyobjc/dbus, not winrt).
+bleak>=0.22,<1.0; sys_platform == "win32"
 
 # === Windows-only (auto-installed by bless on Windows) ===
 # pywin32                     — installed automatically
