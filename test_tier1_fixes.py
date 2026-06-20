@@ -319,6 +319,25 @@ class TestRequirementsPinned:
             f"bless should be PyPI-pinned with upper bound. Got: {bless_line}"
         )
 
+    def test_requirements_txt_is_ascii_only(self):
+        """requirements.txt MUST be 100% ASCII because pip on Windows defaults
+        to cp1252 encoding, which can't decode UTF-8 chars like em-dashes (—),
+        arrows (→), or emojis (⚠️). This caused a UnicodeDecodeError on Windows
+        in a previous commit (we used — and ⚠️ in comments).
+
+        See: https://github.com/MahmoudDabachii2004/velotracker/issues
+        """
+        with open("requirements.txt", "rb") as f:
+            content = f.read()
+        non_ascii = [(i, b) for i, b in enumerate(content) if b > 127]
+        assert not non_ascii, (
+            f"requirements.txt must be 100% ASCII (pip on Windows uses cp1252). "
+            f"Found {len(non_ascii)} non-ASCII bytes at positions: "
+            f"{[i for i, _ in non_ascii[:5]]}. "
+            f"Replace em-dashes (—) with hyphens (-), emojis with [WARNING], "
+            f"arrows (→) with ->, etc."
+        )
+
     def test_no_bleak_upper_pin_on_windows(self):
         """We previously tried 'bleak<1.0' on Windows, but bless 0.3.0 REQUIRES
         bleak>=1.1.1, so bleak<1.0 is impossible. The conflict is inside bless itself.

@@ -2,18 +2,18 @@
 # Install: pip install -r requirements.txt
 #
 # Supported platforms:
-#   macOS 12+   — Python 3.9-3.13 (any version works)
-#   Windows 10+ — Python 3.11 ONLY (see warning below)
-#   Linux       — Python 3.9+ (requires BlueZ + D-Bus)
+#   macOS 12+   - Python 3.9-3.13 (any version works)
+#   Windows 10+ - Python 3.11 ONLY (see warning below)
+#   Linux       - Python 3.9+ (requires BlueZ + D-Bus)
 #
-# ⚠️ WINDOWS + PYTHON 3.12+ IS NOT SUPPORTED:
+# [WARNING] WINDOWS + PYTHON 3.12+ IS NOT SUPPORTED:
 #   bless 0.3.0 (the only stable PyPI release) has an internal dependency
 #   conflict on Python 3.12+ Windows:
 #     - bless 0.3.0 requires bleak>=1.1.1
 #     - bleak >= 1.0 requires winrt-Windows.Devices.Bluetooth>=3.1
 #     - BUT bless 0.3.0 also pins winrt-Windows.Devices.Bluetooth==2.0.0b1
 #       (only on Python 3.12+)
-#   → pip cannot resolve these together. The conflict is INSIDE bless 0.3.0.
+#   -> pip cannot resolve these together. The conflict is INSIDE bless 0.3.0.
 #
 #   We tried pinning to bless git master (commit a27e1c25, Apr 2026) which
 #   fixes the winrt conflict, but it introduces OTHER breaking API changes
@@ -37,17 +37,17 @@ numpy>=1.24
 # Windows admin for the device name. Reverted to stable 0.3.0.
 #
 # On Windows, this means Python 3.11 is required (3.12+ has unsolvable
-# dependency conflict — see note above).
+# dependency conflict - see note above).
 bless>=0.3.0,<0.4.0
 
 # === Windows-only (auto-installed by bless on Windows) ===
-# pywin32                     — installed automatically
-# bleak-winrt>=1.2.0          — installed automatically (Python 3.11)
-# winrt-Windows.*==2.0.0b1    — installed automatically (Python 3.12+ ONLY,
-#                               but causes conflict — see note above)
+# pywin32                     - installed automatically
+# bleak-winrt>=1.2.0          - installed automatically (Python 3.11)
+# winrt-Windows.*==2.0.0b1    - installed automatically (Python 3.12+ ONLY,
+#                               but causes conflict - see note above)
 #
 # MANUAL install required on Windows:
 #   pip install git+https://github.com/gwangyi/pysetupdi
 #
 # === Linux-only (auto-installed by bless on Linux) ===
-# dbus-next                   — installed automatically
+# dbus-next                   - installed automatically
