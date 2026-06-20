@@ -29,8 +29,7 @@ class ColorDetector:
         self._initial_mean_hsv = None
         k = config.MORPH_KERNEL_SIZE
         self._kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-        self._smooth_cx: Optional[float] = None
-        self._smooth_cy: Optional[float] = None
+        self._smooth_cx: Optional[float] = None  # kept for backward compat in DetectionResult.cx
         
         # Initialize CLAHE for Value/Brightness normalization
         clip_limit = getattr(config, "CLAHE_CLIP_LIMIT", 3.0)
@@ -145,13 +144,9 @@ class ColorDetector:
         raw_cy = int(round(local_cy + crop_offset[1]))
         global_largest = largest + np.array([crop_offset[0], crop_offset[1]], dtype=np.int32)
 
-        if self._smooth_cx is None:
-            self._smooth_cx = float(raw_cx)
-            self._smooth_cy = float(raw_cy)
-        else:
-            a = 0.8
-            self._smooth_cx = a * raw_cx + (1 - a) * self._smooth_cx
-            self._smooth_cy = a * raw_cy + (1 - a) * self._smooth_cy
+        # BUG #15: removed redundant EMA smoothing (α=0.8 was effectively no-op,
+        # and the Kalman filter in RPMCalculator already subsumes this role).
+        # DetectionResult.cx/cy now return raw_cx/raw_cy directly.
 
         # Reconstruct full frame mask for the dashboard debug view
         full_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
@@ -161,8 +156,8 @@ class ColorDetector:
             full_mask = crop_mask
 
         return DetectionResult(
-            cx=int(round(self._smooth_cx)),
-            cy=int(round(self._smooth_cy)),
+            cx=raw_cx,
+            cy=raw_cy,
             raw_cx=raw_cx,
             raw_cy=raw_cy,
             contour=global_largest,

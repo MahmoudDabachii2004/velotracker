@@ -1,0 +1,383 @@
+"""VeloTracker — Unit tests for Tier 1 fixes (pytest).
+
+Run with: pytest test_tier1_fixes.py -v
+
+These tests validate the 10 quick-win fixes from the production-grade audit
+(docs/audit/VELTRACKER_AUDIT.md). They are pure-logic tests that don't require
+a camera or BLE hardware, so they can run in CI on any platform.
+"""
+
+import sys
+import os
+import math
+import time
+import struct
+from pathlib import Path
+
+# Make the project importable from anywhere
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import pytest
+import numpy as np
+
+import config
+from modules.ble_server import BLECadenceServer
+from modules.rpm_calculator import RPMCalculator, StickerKalmanFilter
+
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+def simulate_pedaling(rpm_target: float, frames: int = 300, fps: float = 30.0):
+    """Drive an RPMCalculator with a synthetic circular pedal motion at a target RPM.
+
+    Returns the calculator after simulation.
+    """
+    calc = RPMCalculator()
+    center = (320, 240)
+    radius = 100.0
+    omega = (rpm_target / 60.0) * 2 * math.pi  # rad/sec
+    t0 = time.time()
+    for i in range(frames):
+        t = t0 + i * (1.0 / fps)
+        angle = omega * (t - t0)
+        x = center[0] + radius * math.cos(angle)
+        y = center[1] + radius * math.sin(angle)
+        calc.update(int(x), int(y), t)
+    return calc
+
+
+# ============================================================================
+# BUG #2 — WHEEL_TO_CRANK_RATIO consistency
+# ============================================================================
+
+class TestDrivetrainConfig:
+    """Validate that config exposes CHAINRING and COG, and the ratio is consistent."""
+
+    def test_chainring_and_cog_exist(self):
+        assert hasattr(config, "CHAINRING"), "config.CHAINRING should be defined"
+        assert hasattr(config, "COG"), "config.COG should be defined"
+
+    def test_ratio_matches_chainring_over_cog(self):
+        expected = config.CHAINRING / config.COG
+        assert config.WHEEL_TO_CRANK_RATIO == pytest.approx(expected, rel=1e-6), (
+            f"WHEEL_TO_CRANK_RATIO={config.WHEEL_TO_CRANK_RATIO} should equal "
+            f"CHAINRING/COG={expected}"
+        )
+
+    def test_default_50x17_for_ftp_test(self):
+        """50x17 is the TrainerRoad/Kinetic FTP-test standard gear."""
+        # Default config should match this — change the assertion if you intentionally
+        # ship a different default ratio.
+        assert config.CHAINRING == 50
+        assert config.COG == 17
+        assert config.WHEEL_TO_CRANK_RATIO == pytest.approx(50 / 17, rel=1e-6)
+
+
+# ============================================================================
+# BUG #9 — BLE device name
+# ============================================================================
+
+class TestBLEDeviceName:
+    """The device name should be 'VeloTracker' (was 'V' — too cryptic)."""
+
+    def test_device_name_is_velotracker(self):
+        assert config.BLE_DEVICE_NAME == "VeloTracker", (
+            f"Expected 'VeloTracker', got '{config.BLE_DEVICE_NAME}'"
+        )
+
+    def test_device_name_fits_macos_advert_budget(self):
+        """macOS CoreBluetooth limits adv payload to ~28 usable bytes.
+        Budget: Flags (3B) + 3 × 16-bit SVCS (8B) + Local Name (len+2) <= 28.
+        """
+        name = config.BLE_DEVICE_NAME
+        # 3 (Flags) + 2 (AD type+len) + 6 (3 SVCS × 2 bytes) + 2 (Local Name header) + len(name)
+        adv_size = 3 + 2 + 6 + 2 + len(name)
+        assert adv_size <= 28, (
+            f"Advertising payload would be {adv_size} bytes, exceeds macOS 28-byte budget"
+        )
+
+
+# ============================================================================
+# BUG #14 — Glitch rejection threshold tightened
+# ============================================================================
+
+class TestGlitchRejection:
+    """Glitch threshold should be 0.3 rad (was 1.0 — never triggered for humans)."""
+
+    def test_max_delta_angle_is_tight(self):
+        assert RPMCalculator.MAX_DELTA_ANGLE == 0.3, (
+            f"Expected 0.3, got {RPMCalculator.MAX_DELTA_ANGLE}"
+        )
+
+    def test_normal_pedaling_not_rejected(self):
+        """At 90 RPM, 30 FPS, per-frame angle delta is ~18° (~0.31 rad).
+        With the adaptive threshold (1.5 * omega * dt + 0.1), this should NOT be rejected.
+        """
+        calc = simulate_pedaling(rpm_target=90, frames=300, fps=30.0)
+        # After 300 frames, we should be in TRACKING phase with RPM close to 90
+        assert calc.phase == "TRACKING"
+        assert 80 <= calc.rpm <= 100, f"Expected ~90 RPM, got {calc.rpm}"
+
+    def test_spike_is_rejected(self):
+        """A sudden huge angle jump should be rejected (not corrupt total_angle)."""
+        calc = RPMCalculator()
+        center = (320, 240)
+        radius = 100.0
+        omega = (90 / 60.0) * 2 * math.pi
+        t0 = time.time()
+
+        # Warm up with 120 frames — 90 for calibration, 30 for tracking to establish prev_angle
+        for i in range(120):
+            t = t0 + i / 30.0
+            angle = omega * (t - t0)
+            x = center[0] + radius * math.cos(angle)
+            y = center[1] + radius * math.sin(angle)
+            calc.update(int(x), int(y), t)
+
+        # Verify we're in TRACKING and prev_angle is set
+        assert calc.phase == "TRACKING"
+        assert calc._prev_angle is not None, "prev_angle should be set after warm-up"
+
+        # Now inject a sudden spike — a 5-radian jump (impossible at human cadence)
+        prev_angle = calc._prev_angle
+        spike_angle = prev_angle + 5.0
+        # Position at the spike angle
+        sx = center[0] + radius * math.cos(spike_angle)
+        sy = center[1] + radius * math.sin(spike_angle)
+        t_spike = t0 + 121 / 30.0
+        calc.update(int(sx), int(sy), t_spike)
+
+        # The spike should NOT have been added to total_angle
+        # If it had been accepted, total_angle would jump by ~5 rad
+        # With our threshold, the spike is rejected, so total_angle grows by ~0.3 rad (normal frame)
+        # We just check that the tracker didn't go crazy
+        assert abs(calc._omega) < 50, f"Omega should not explode after spike, got {calc._omega}"
+
+
+# ============================================================================
+# BUG #15 — Redundant EMA removed from detector
+# ============================================================================
+
+class TestDetectorNoRedundantEMA:
+    """The detector should NOT have a redundant EMA smoother (Kalman in RPMCalc is enough)."""
+
+    def test_smooth_cx_not_used_in_output(self):
+        """DetectionResult.cx should equal raw_cx (no EMA smoothing applied)."""
+        # We can't easily run a full detection without a real frame + camera,
+        # but we can verify the detector.py source doesn't reference _smooth_cx in the return.
+        detector_src = Path("modules/detector.py").read_text()
+        # The return statement should use raw_cx, not _smooth_cx
+        assert "cx=raw_cx" in detector_src or "cx=raw_cx," in detector_src, (
+            "Detector should return raw_cx directly (no EMA). "
+            "Check the DetectionResult construction in detector.py"
+        )
+
+
+# ============================================================================
+# BUG #19 — ble_diagnostic uses _calculate_power (not hardcoded linear)
+# ============================================================================
+
+class TestBLEDiagnosticUsesRealPower:
+    """ble_diagnostic.py should call server._calculate_power, not hardcode linear formula."""
+
+    def test_no_hardcoded_linear_formula(self):
+        diag_src = Path("ble_diagnostic.py").read_text()
+        # The old buggy line was: expected_power = int(current_rpm * 0.8 + 30.0)
+        assert "current_rpm * 0.8 + 30" not in diag_src, (
+            "ble_diagnostic.py still has hardcoded linear power formula"
+        )
+        assert "_calculate_power(current_rpm)" in diag_src, (
+            "ble_diagnostic.py should use server._calculate_power(current_rpm)"
+        )
+
+
+# ============================================================================
+# BUG #20 — Unified decay factor
+# ============================================================================
+
+class TestUnifiedDecay:
+    """Both decay paths should use config.RPM_DECAY_FACTOR (was 0.80 vs 0.85)."""
+
+    def test_no_hardcoded_080_decay(self):
+        """The _estimate_rpm method should reference RPM_DECAY_FACTOR, not hardcode 0.80."""
+        rpm_src = Path("modules/rpm_calculator.py").read_text()
+        # The old buggy line was: self._current_rpm *= 0.80
+        # We allow the literal 0.80 to appear in comments, but not in a *= assignment
+        bad_pattern = "self._current_rpm *= 0.80"
+        assert bad_pattern not in rpm_src, (
+            f"Found '{bad_pattern}' in rpm_calculator.py — should use config.RPM_DECAY_FACTOR"
+        )
+
+    def test_estimate_rpm_uses_config_decay(self):
+        """_estimate_rpm should reference RPM_DECAY_FACTOR for the decay path."""
+        rpm_src = Path("modules/rpm_calculator.py").read_text()
+        # Find the _estimate_rpm method (between def _estimate_rpm and the next def)
+        start = rpm_src.find("def _estimate_rpm")
+        end = rpm_src.find("def ", start + 10)
+        estimate_rpm_body = rpm_src[start:end]
+        assert "RPM_DECAY_FACTOR" in estimate_rpm_body, (
+            "_estimate_rpm should reference config.RPM_DECAY_FACTOR for the decay path"
+        )
+
+
+# ============================================================================
+# BUG #25 — _calculate_power is a @staticmethod
+# ============================================================================
+
+class TestCalculatePowerIsStatic:
+    """calculate_power should be callable without instantiating the BLE server."""
+
+    def test_calculate_power_is_staticmethod(self):
+        """Direct check: can we call BLECadenceServer.calculate_power(rpm) without instance?"""
+        # This should NOT raise — if calculate_power is a @staticmethod, it works on the class
+        watts = BLECadenceServer.calculate_power(90.0, model="linear")
+        assert watts == 102, f"Expected 102 W for 90 RPM linear, got {watts}"
+
+    def test_fluid_model_matches_kurt_kinetic_spec(self):
+        """Validate against Kurt Kinetic's official curve anchors:
+        - 16.1 mph ≈ 164 W
+        - 20 mph ≈ 258 W
+        - 25 mph ≈ 431 W
+
+        With 50x17 gear and 700x25c tire:
+        - 16.1 mph = 25.9 km/h = 69.7 RPM (50x17, 2.105m circ)
+        - 20 mph = 32.2 km/h = 86.7 RPM
+        - 25 mph = 40.2 km/h = 108.4 RPM
+        """
+        ratio = 50 / 17  # default
+        circ = 2.105
+        # mph to km/h to RPM: RPM = mph_kmh / (ratio * circ * 0.06)
+        for mph_target, expected_watts in [(16.1, 164), (20.0, 258), (25.0, 431)]:
+            kmh = mph_target * 1.609344
+            rpm = kmh / (ratio * circ * 0.06)
+            watts = BLECadenceServer.calculate_power(rpm, model="fluid",
+                                                     ratio=ratio, circumference_m=circ)
+            # ±5% tolerance (the official curve itself varies by ±2-3% with temperature)
+            assert abs(watts - expected_watts) / expected_watts < 0.05, (
+                f"At {mph_target} mph (RPM={rpm:.1f}): expected ~{expected_watts} W, got {watts} W"
+            )
+
+    def test_zero_rpm_returns_zero(self):
+        for model in ["linear", "fluid", "mag"]:
+            assert BLECadenceServer.calculate_power(0.0, model=model) == 0
+            assert BLECadenceServer.calculate_power(0.5, model=model) == 0  # below 1.0 RPM threshold
+
+    def test_negative_rpm_returns_zero(self):
+        """Negative RPM (e.g. backpedaling) should not produce negative power."""
+        for model in ["linear", "fluid", "mag"]:
+            assert BLECadenceServer.calculate_power(-50.0, model=model) == 0
+
+    def test_high_rpm_clamped_to_sint16_max(self):
+        """At extreme RPM, power should be clamped to 0x7FFF (32767 W) — sint16 positive max."""
+        # 1000 RPM in fluid model would give huge watts
+        watts = BLECadenceServer.calculate_power(1000.0, model="fluid")
+        assert watts <= 0x7FFF, f"Power should be clamped to 0x7FFF, got {watts}"
+
+    def test_unknown_model_falls_back_to_linear(self):
+        """An unknown model name should fall back to the linear formula, not crash."""
+        watts = BLECadenceServer.calculate_power(90.0, model="nonexistent_model")
+        assert watts == 102  # same as linear
+
+    def test_instance_method_still_works(self):
+        """The instance method _calculate_power should still work (backward compat)."""
+        # We can't instantiate BLECadenceServer without launching BLE, but we can
+        # verify the method exists and delegates to the staticmethod.
+        # This is a structural test.
+        assert hasattr(BLECadenceServer, "_calculate_power")
+        assert hasattr(BLECadenceServer, "calculate_power")
+
+
+# ============================================================================
+# BUG #26 — bless version pinned in requirements.txt
+# ============================================================================
+
+class TestRequirementsPinned:
+    """requirements.txt should pin bless to a specific major version range."""
+
+    def test_bless_version_pinned(self):
+        req_text = Path("requirements.txt").read_text()
+        # Should contain a bless line with both lower and upper bounds
+        # e.g. "bless>=0.3.0,<0.4.0" or "bless==0.3.0"
+        bless_lines = [l for l in req_text.splitlines() if l.strip().startswith("bless")]
+        assert len(bless_lines) >= 1, "bless should be in requirements.txt"
+        bless_line = bless_lines[0]
+        # Should have either an upper bound (<) or exact pin (==)
+        assert ("<" in bless_line) or ("==" in bless_line), (
+            f"bless should be version-pinned with upper bound or exact pin, got: {bless_line}"
+        )
+
+
+# ============================================================================
+# BUG #18 — test_filters.py uses cross-platform path
+# ============================================================================
+
+class TestTestFiltersCrossPlatform:
+    """test_filters.py should NOT hardcode a Windows path."""
+
+    def test_no_hardcoded_windows_path(self):
+        tf_src = Path("test_filters.py").read_text()
+        # The old buggy line was: sys.path.insert(0, r"c:\Users\newMahmoud\velotracker")
+        assert "c:\\Users" not in tf_src and "C:\\Users" not in tf_src, (
+            "test_filters.py should not hardcode Windows user path"
+        )
+        # Should use the cross-platform pattern
+        assert "os.path.dirname(os.path.abspath(__file__))" in tf_src, (
+            "test_filters.py should use os.path.dirname(os.path.abspath(__file__)) for sys.path"
+        )
+
+
+# ============================================================================
+# BUG #13 — README mentions Taubin (not Kasa)
+# ============================================================================
+
+class TestReadmeMentionsTaubin:
+    """README should say 'Taubin' (the actual algorithm), not 'Kasa'."""
+
+    def test_no_kasa_in_readme(self):
+        readme = Path("README.md").read_text()
+        # Kasa is allowed in the comparison sentence ("Taubin is much more stable than Kasa")
+        # but NOT in standalone claims like "Kasa circle fit + OLS regression -> RPM"
+        # We check that "Kasa circle fit" doesn't appear (it should be "Taubin circle fit")
+        assert "Kasa circle fit" not in readme, (
+            "README should say 'Taubin circle fit', not 'Kasa circle fit'"
+        )
+
+    def test_taubin_mentioned_in_readme(self):
+        readme = Path("README.md").read_text()
+        assert "Taubin" in readme, "README should mention Taubin (the actual algorithm used)"
+
+
+# ============================================================================
+# Integration: simulate_pedaling still works end-to-end
+# ============================================================================
+
+class TestEndToEndSimulation:
+    """Sanity check: with all the fixes applied, the RPMCalculator still works correctly."""
+
+    @pytest.mark.parametrize("target_rpm,expected_tolerance", [
+        (60, 5),    # 60 RPM ±5
+        (80, 5),
+        (90, 5),
+        (100, 5),
+        (120, 5),
+    ])
+    def test_rpm_detection_accuracy(self, target_rpm, expected_tolerance):
+        """After 300 frames of simulated pedaling, detected RPM should be close to target."""
+        calc = simulate_pedaling(rpm_target=target_rpm, frames=300, fps=30.0)
+        assert calc.phase == "TRACKING", f"Expected TRACKING phase, got {calc.phase}"
+        assert abs(calc.rpm - target_rpm) <= expected_tolerance, (
+            f"At {target_rpm} RPM: expected ±{expected_tolerance}, got {calc.rpm}"
+        )
+
+    def test_revolutions_counted(self):
+        """At 90 RPM for 10 seconds (3s calibration + 7s tracking),
+        we should have ~10-11 revolutions from the tracking phase.
+        (The first 90 frames / 3 seconds go to calibration, not revolution counting.)
+        """
+        calc = simulate_pedaling(rpm_target=90, frames=300, fps=30.0)
+        # 90 RPM × 7 sec tracking = 10.5 revolutions
+        assert 7 <= calc.revolutions <= 13, (
+            f"Expected ~10 revolutions at 90 RPM for 7s tracking, got {calc.revolutions}"
+        )

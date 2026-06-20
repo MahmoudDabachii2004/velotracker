@@ -53,7 +53,9 @@ try:
         rev += 1
         server.update(rev, current_rpm=current_rpm)
         
-        expected_power = int(current_rpm * 0.8 + 30.0)
+        # Use the real power calculation (respects config.POWER_MODEL)
+        # instead of the previous hardcoded linear formula.
+        expected_power = server._calculate_power(current_rpm)
         print(f"[Diag] Elapsed: {elapsed:4.1f}s | RPM: {current_rpm:5.1f} | Power: {expected_power:3d}W | Status: {server.status}")
         
         # Sleep for 1 revolution at the current RPM

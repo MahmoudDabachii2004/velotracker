@@ -200,27 +200,63 @@ class BLECadenceServer:
     def _write_request(self, characteristic: BlessGATTCharacteristic, value: Any, **kwargs):
         characteristic.value = value
 
-    def _calculate_power(self, rpm: float) -> int:
+    @staticmethod
+    def calculate_power(rpm: float,
+                       model: Optional[str] = None,
+                       ratio: Optional[float] = None,
+                       circumference_m: Optional[float] = None) -> int:
+        """Compute estimated power (W) from crank RPM using the configured trainer model.
+
+        This is a @staticmethod so it can be unit-tested without instantiating
+        the BLE server (which would launch the asyncio loop and advertising).
+
+        Args:
+            rpm: Cadence in revolutions per minute.
+            model: Override config.POWER_MODEL ("linear" | "fluid" | "mag").
+                   If None, uses config.POWER_MODEL at call time.
+            ratio: Override config.WHEEL_TO_CRANK_RATIO (chainring/cog).
+            circumference_m: Override config.WHEEL_CIRCUMFERENCE_M.
+
+        Returns:
+            Power in Watts, clamped to [0, 0x7FFF] (sint16 positive range).
+
+        Models:
+            linear — P = rpm * 0.8 + 30   (debug only, not accurate to any real trainer)
+            fluid  — Kurt Kinetic Road Machine official curve:
+                     P = 5.244820 * S + 0.019168 * S^3   (S = wheel speed in mph)
+                     Source: https://kurtkinetic.com/
+            mag    — Generic magnetic trainer estimate (±20-30% uncertainty):
+                     P = 0.1 * S^2 + 3.0 * S + 10   (S = wheel speed in km/h)
+        """
         if rpm < 1.0:
             return 0
-        
-        model = getattr(config, "POWER_MODEL", "linear").lower()
+
+        model = (model or getattr(config, "POWER_MODEL", "linear")).lower()
+        ratio = ratio if ratio is not None else getattr(config, "WHEEL_TO_CRANK_RATIO", 2.0)
+        circ = circumference_m if circumference_m is not None else getattr(config, "WHEEL_CIRCUMFERENCE_M", 2.105)
+
         if model == "linear":
             power = rpm * 0.8 + 30.0
         else:
-            ratio = getattr(config, "WHEEL_TO_CRANK_RATIO", 2.0)
-            circ = getattr(config, "WHEEL_CIRCUMFERENCE_M", 2.105)
+            # Convert crank RPM to wheel speed in km/h
             speed_kmh = (rpm * ratio * circ * 60.0) / 1000.0
-            
+
             if model == "fluid":
+                # Kurt Kinetic Road Machine — official coefficients
+                # (0.019168 is the current official value; older 0.01968 was 2.7% stiffer)
                 speed_mph = speed_kmh / 1.609344
-                power = 5.244820 * speed_mph + 0.01968 * (speed_mph ** 3)
+                power = 5.244820 * speed_mph + 0.019168 * (speed_mph ** 3)
             elif model == "mag":
                 power = 0.1 * (speed_kmh ** 2) + 3.0 * speed_kmh + 10.0
             else:
+                # Unknown model → fallback to linear
                 power = rpm * 0.8 + 30.0
-                
+
         return int(max(0, min(0x7FFF, power)))
+
+    def _calculate_power(self, rpm: float) -> int:
+        """Instance wrapper around the static calculate_power for internal use."""
+        return self.calculate_power(rpm)
 
     # ========================================================================
     # Packet builders

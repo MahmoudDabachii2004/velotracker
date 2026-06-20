@@ -2,8 +2,8 @@ import sys
 import os
 import numpy as np
 
-# Add workspace directory to python path directly
-sys.path.insert(0, r"c:\Users\newMahmoud\velotracker")
+# Add workspace directory to python path directly (cross-platform safe)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from modules.rpm_calculator import StickerKalmanFilter
 from modules.ble_server import BLECadenceServer
@@ -43,19 +43,31 @@ def test_kalman():
 
 def test_zpower():
     print("\n--- Testing zPower Calculations ---")
-    server = BLECadenceServer()
+    # Use the @staticmethod so we don't need to instantiate the BLE server
+    # (which would launch an asyncio loop and start advertising).
     
-    # Test different RPM values for "fluid" trainer model
+    # Test different RPM values for "fluid" trainer model (Kurt Kinetic)
     config.POWER_MODEL = "fluid"
-    for rpm in [0.0, 60.0, 90.0, 120.0]:
-        watts = server._calculate_power(rpm)
-        print(f"RPM: {rpm:3.1f} | zPower (fluid): {watts:3d} W")
+    print(f"\n[fluid] Kurt Kinetic Road Machine (official curve)")
+    for rpm in [0.0, 60.0, 80.0, 90.0, 100.0, 120.0]:
+        watts = BLECadenceServer.calculate_power(rpm)
+        speed_kmh = (rpm * config.WHEEL_TO_CRANK_RATIO * config.WHEEL_CIRCUMFERENCE_M * 60.0) / 1000.0
+        print(f"  RPM: {rpm:3.1f} | speed: {speed_kmh:5.1f} km/h | zPower: {watts:3d} W")
 
     # Test different RPM values for "mag" trainer model
     config.POWER_MODEL = "mag"
-    for rpm in [0.0, 60.0, 90.0, 120.0]:
-        watts = server._calculate_power(rpm)
-        print(f"RPM: {rpm:3.1f} | zPower (mag): {watts:3d} W")
+    print(f"\n[mag] Generic magnetic trainer")
+    for rpm in [0.0, 60.0, 80.0, 90.0, 100.0, 120.0]:
+        watts = BLECadenceServer.calculate_power(rpm)
+        speed_kmh = (rpm * config.WHEEL_TO_CRANK_RATIO * config.WHEEL_CIRCUMFERENCE_M * 60.0) / 1000.0
+        print(f"  RPM: {rpm:3.1f} | speed: {speed_kmh:5.1f} km/h | zPower: {watts:3d} W")
+
+    # Test linear model (debug only)
+    config.POWER_MODEL = "linear"
+    print(f"\n[linear] Debug mode (not accurate to any real trainer)")
+    for rpm in [0.0, 60.0, 80.0, 90.0, 100.0, 120.0]:
+        watts = BLECadenceServer.calculate_power(rpm)
+        print(f"  RPM: {rpm:3.1f} | zPower: {watts:3d} W")
 
 if __name__ == "__main__":
     test_kalman()

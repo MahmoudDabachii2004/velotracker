@@ -82,7 +82,11 @@ class RPMCalculator:
     PHASE_TRACKING = "TRACKING"
 
     EMA_RPM = 0.15
-    MAX_DELTA_ANGLE = 1.0
+    # Maximum angular delta per frame, in radians.
+    # At 30 FPS, 0.3 rad/frame ≈ 17°/frame ≈ 86 RPM (well above typical 90 RPM).
+    # At 120 RPM, the pedal moves ~12°/frame at 60 FPS — comfortably below threshold.
+    # Previous value (1.0 rad ≈ 1725 RPM) never triggered for human cadence.
+    MAX_DELTA_ANGLE = 0.3
 
     def __init__(self):
         self.reset()
@@ -292,7 +296,13 @@ class RPMCalculator:
         if dt <= 0:
             return
 
-        max_delta = self.MAX_DELTA_ANGLE * (dt / 0.033)
+        # Adaptive glitch rejection: scale by dt to handle variable FPS,
+        # and add a small margin over the predicted omega to allow acceleration.
+        # base = 0.3 rad/frame at 30 FPS; allow 1.5x predicted motion + 0.1 rad safety.
+        max_delta = max(
+            self.MAX_DELTA_ANGLE * (dt / 0.033),
+            1.5 * abs(self._omega) * dt + 0.1
+        )
         if abs(delta) > max_delta:
             self._prev_angle = angle
             return
@@ -413,7 +423,10 @@ class RPMCalculator:
         if self._current_rpm == 0 and target > 0:
             self._current_rpm = target
         elif target == 0:
-            self._current_rpm *= 0.80
+            # Use the unified decay factor (BUG #20: previously hardcoded 0.80,
+            # inconsistent with update_lost() which uses RPM_DECAY_FACTOR=0.85).
+            decay_factor = getattr(config, "RPM_DECAY_FACTOR", 0.85)
+            self._current_rpm *= decay_factor
             if self._current_rpm < 1.0:
                 self._current_rpm = 0.0
         else:

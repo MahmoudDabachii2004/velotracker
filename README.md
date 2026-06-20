@@ -16,7 +16,7 @@ VeloTracker uses your iPhone (as a webcam via IriunWebcam) pointed at the pedal,
             v
 [Computer running VeloTracker]
     |-- OpenCV: HSV color detection finds sticker
-    |-- Kasa circle fit + OLS regression -> RPM
+    |-- Taubin circle fit + weighted OLS regression -> RPM
     |-- bless BLE server:
     |       * CSC Service  (0x1816) -> cadence + speed
     |       * FTMS Service (0x1826) -> controllable trainer
@@ -279,7 +279,7 @@ VeloTracker/
     __init__.py
     camera.py            OpenCV camera wrapper (platform-aware backend)
     detector.py          HSV color detection
-    rpm_calculator.py    Kasa circle fit + OLS RPM regression
+    rpm_calculator.py    Taubin circle fit + weighted OLS RPM regression
     dashboard.py         OpenCV HUD overlay
     ble_server.py        bless BLE GATT server (cross-platform)
 ```
@@ -290,13 +290,13 @@ VeloTracker/
 
 1. **Bilateral filtering** smooths color noise while preserving sticker edges.
 2. **CLAHE local contrast normalization** on the Value (brightness) channel makes detection highly robust to shadows and changing lighting.
-3. **HSV color detection** finds the sticker's centroid each frame.
-4. **Light EMA smoothing** reduces jitter.
-5. **Taubin circle fit** (first 90 frames): O(n) algebraic fit finds rotation center + radius. Taubin is much more stable than Kasa for partial arcs (short calibration times).
+3. **HSV color detection** finds the sticker's centroid each frame (with CLAHE on the V channel for lighting invariance).
+4. **Kalman filter (4D state: x, y, vx, vy)** reduces measurement jitter on the centroid.
+5. **Taubin algebraic circle fit** (first 90 frames): finds rotation center + radius. Taubin is much more stable than Kasa for partial arcs (short calibration times).
 6. **Continuous center adjustment**: circle is re-fit on last 150 positions.
 7. **Phase unwrapping**: `atan2(dy, dx)` unwrapped across +/- pi gives continuous total angle.
 8. **Weighted OLS regression**: 20-frame sliding window fits (time, total_angle) using exponential decay weights (recent samples count more). This responds faster to accelerations/decelerations.
-9. **Glitch rejection**: angle delta > 1 rad/frame is rejected.
+9. **Glitch rejection**: angle delta > 0.3 rad/frame (adaptive: scaled by dt and predicted omega) is rejected. At 30 FPS this is ~86 RPM; human cadence stays comfortably below.
 10. **Circular predictor with acceleration**: if detection is lost, predicts position using the last known velocity and angular acceleration (linear extrapolation), decaying naturally to a stop, and counting revolutions for up to 3 seconds.
 
 ---
